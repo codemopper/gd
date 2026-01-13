@@ -142,6 +142,7 @@ struct tag_state {};          ///< state is used in some form, like current cond
 struct tag_status {};         ///< status is used in some form, like active/inactive
 struct tag_success {};        ///< success is used in some form
 struct tag_table {};          ///< table is used in some form
+struct tag_column {};         ///< column is used in some form, like table columns
 struct tag_card {};           ///< card is used in some form, like a data card or card form
 struct tag_dimension {};      ///< dimension is used in some form, like width/height
 struct tag_duration {};       ///< duration is used in some form, like time duration
@@ -325,12 +326,12 @@ inline unsigned detect_ctypegroup_g( const std::string_view& stringText ) { retu
 
 
 /*-----------------------------------------*/ /**
-   * \brief type numbers for common data types
-   *
-   * Numbers for common types used i gd code.
-   * Using these numbers as a form of meta data in code, it will simply
-   * to make code more compatible. Simplify to move data between objects.
-   */
+ * \brief type numbers for common data types
+ *
+ * Numbers for common types used i gd code.
+ * Using these numbers as a form of meta data in code, it will simply
+ * to make code more compatible. Simplify to move data between objects.
+ */
 enum enumTypeNumber
 {
    // ## primitive types
