@@ -114,10 +114,15 @@ struct tag_count {};          ///< count is used in some form
 struct tag_single {};         ///< single is used in some form
 struct tag_double {};         ///< double is used in some form
 struct tag_multiple {};       ///< multiple is used in some form
+struct tag_null {};           ///< null is used in some form
+struct tag_not_null {};       ///< not null is used in some form
+struct tag_min {};            ///< min is used in some form
+struct tag_max {};            ///< max is used in some form
 
 
 // ----------------------------------------------------------------------------
 // ## value related tag dispatchers
+
 struct tag_alias {};          ///< alias is used in some form
 struct tag_category {};       ///< category is used in some form, like type or group
 struct tag_color {};          ///< color used in some form
@@ -213,6 +218,10 @@ struct tag_url {};            ///< data is in url format
 struct tag_utf8 {};           ///< data is in utf8 format
 struct tag_xml {};            ///< data is in xml format
 struct tag_yaml {};           ///< data is in YAML format
+
+// ----------------------------------------------------------------------------
+// ## extended types
+struct tag_uuid {};           ///< data is uuid
 
 // ----------------------------------------------------------------------------
 // ## unit related tag dispatchers
@@ -377,6 +386,9 @@ enum enumTypeNumber
    eTypeNumberUuidString   = 37,
 
    eTypeNumberMAX          = 37,
+   
+   eTypeNumberArray        = 62,
+   eTypeNumberObject       = 63,
 };
 
 /*-----------------------------------------*/ /**
@@ -456,7 +468,10 @@ enum enumType
    eTypeRBinary      = eTypeNumberBinary     | eTypeGroupBinary                      | eTypeDetailReference,
    eTypeRString      = eTypeNumberString     | eTypeGroupString                      | eTypeDetailReference,
    eTypeRUtf8String  = eTypeNumberUtf8String | eTypeGroupString                      | eTypeDetailReference,
-   eTypeRWString     = eTypeNumberUtf8String | eTypeGroupString                      | eTypeDetailReference
+   eTypeRWString     = eTypeNumberUtf8String | eTypeGroupString                      | eTypeDetailReference,
+
+   eTypeArray        = eTypeNumberArray                                              | eTypeDetailReference,
+   eTypeObject       = eTypeNumberObject                                             | eTypeDetailReference
 
 };
 
@@ -1015,6 +1030,57 @@ constexpr std::string_view type_name_g(uint32_t uType)
    }
 
    return std::string_view();
+}
+
+/** ---------------------------------------------------------------------------
+ * @brief Returns the JavaScript name for a given type.
+ */
+constexpr std::string_view type_javascript_name_g(uint32_t uType)
+{
+   switch (uType)
+   {
+   case eTypeNumberUnknown:      return "undefined";
+   case eTypeNumberBool:         return "boolean";
+   case eTypeNumberInt8:         return "number";
+   case eTypeNumberUInt8:        return "number";
+   case eTypeNumberInt16:        return "number";
+   case eTypeNumberUInt16:       return "number";
+   case eTypeNumberInt32:        return "number";
+   case eTypeNumberUInt32:       return "number";
+   case eTypeNumberInt64:        return "number";
+   case eTypeNumberUInt64:       return "number";
+   case eTypeNumberFloat:        return "number";
+   case eTypeNumberDouble:       return "number";
+   case eTypeNumberPointer:      return "object";
+   case eTypeNumberGuid:         return "string";
+   case eTypeNumberString:       return "string";
+   case eTypeNumberUtf8String:   return "string";
+   case eTypeNumberWString:      return "string";
+   case eTypeNumberUtf32String:  return "string";
+   case eTypeNumberBinary:       return "object";
+   case eTypeNumberJson:         return "string";
+   case eTypeNumberXml:          return "string";
+   case eTypeNumberCsv:          return "string";
+   case eTypeNumberVoid:         return "undefined";
+   case eTypeNumberBit:          return "boolean";
+   case eTypeNumberInt128:       return "bigint";
+   case eTypeNumberUInt128:      return "bigint";
+   case eTypeNumberInt256:       return "bigint";
+   case eTypeNumberUInt256:      return "bigint";
+   case eTypeNumberInt512:       return "bigint";
+   case eTypeNumberUInt512:      return "bigint";
+   case eTypeNumberHex:          return "string";
+   case eTypeNumberBase32:       return "string";
+   case eTypeNumberDateTime:     return "object";
+   case eTypeNumberDate:         return "object";
+   case eTypeNumberTime:         return "object";
+   case eTypeNumberNumeric:      return "number";
+   case eTypeNumberDecimal:      return "number";
+   case eTypeNumberUuidString:   return "string";
+   case eTypeNumberArray:        return "object";
+   case eTypeNumberObject:       return "object";
+   default:                      return "undefined";
+   }
 }
 
 constexpr uint32_t typenumber_to_type_g(uint32_t uType)

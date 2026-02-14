@@ -190,8 +190,9 @@ namespace variant_type
     */
    struct utf8
    {
-      utf8( const char* pbsz ) : m_pbsz(pbsz), m_uLength( strlen( pbsz ) ) {}
-      utf8( const char* pbsz, size_t uLength ) : m_pbsz(pbsz), m_uLength( uLength ) {}
+      explicit utf8( const char* pbsz ) : m_pbsz(pbsz), m_uLength( strlen( pbsz ) ) {}
+      explicit utf8( const char* pbsz, size_t uLength ) : m_pbsz(pbsz), m_uLength( uLength ) {}
+      explicit utf8( std::string_view stringUtf8 ): m_pbsz(stringUtf8.data()), m_uLength(stringUtf8.size()) {}
       utf8( const utf8& o ) { m_pbsz = o.m_pbsz; m_uLength = o.m_uLength; }
       // attributes
       public:
@@ -290,6 +291,7 @@ public:
    variant( const wchar_t* v, size_t uLength ): m_uType(variant_type::eTypeWString|variant_type::eFlagAllocate), m_uSize(uLength) { m_V.pwsz = (wchar_t*)allocate((uLength + 1) * sizeof(wchar_t)); memcpy( m_V.pwsz, v, (uLength) * sizeof(wchar_t) ); m_V.pwsz[uLength] = L'\0'; }
    variant( const wchar_t* v, size_t uLength, bool ) : m_uType(variant_type::eTypeWString), m_uSize(uLength) { m_V.pwsz = const_cast<wchar_t*>(v); }
    variant( const unsigned char* v, size_t uLength, bool ): m_uType(variant_type::eTypeBinary), m_uSize(uLength) { m_V.pb = const_cast<unsigned char*>(v); }
+   variant( const unsigned char* v, size_t uLength, gd::types::tag_binary ): m_uType(variant_type::eTypeBinary), m_uSize(uLength) { m_V.pb = const_cast<unsigned char*>(v); }
    variant( const utf8& v ) : m_uType(variant_type::eTypeUtf8String|variant_type::eFlagAllocate), m_uSize(v.m_uLength) { m_V.pbsz = (char*)allocate(  m_uSize + 1u ); memcpy( m_V.pbsz, v.m_pbsz,  m_uSize + 1u ); }
    variant( const utf8& v, unsigned int uType ) : m_uType(uType|variant_type::eFlagAllocate), m_uSize(v.m_uLength) { m_V.pbsz = (char*)allocate( m_uSize + 1u ); memcpy( m_V.pbsz, v.m_pbsz,  m_uSize + 1u ); }
    variant( const utf8& v, bool ) : m_uType(variant_type::eTypeUtf8String), m_uSize(v.m_uLength) { m_V.pbsz = const_cast<char*>(v.m_pbsz); }
@@ -305,6 +307,11 @@ public:
 
    variant(const char* v, bool) : m_uType(variant_type::eTypeString), m_uSize(strlen(v)) { m_V.pbsz_const = v; }
    variant(const std::string_view& v, bool) : m_uType(variant_type::eTypeString), m_uSize(v.length()) { m_V.pbsz_const = v.data(); }
+   
+   // @API [tag: constructor] [description: constructor for variant from string]
+   
+   /// @brief Constructor that tries to figure out the type based on json
+   variant( std::string_view stringJson, bool* pbSucceeded, gd::types::tag_json );
 
    variant( const variant& o ) { common_construct( o ); }                        // copy
    variant( variant&& o ) noexcept { move_construct( o ); }                      // move

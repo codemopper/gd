@@ -109,9 +109,12 @@ public:
    variant_view( const char* v, size_t uLength) : m_uType(variant_type::eTypeString), m_uSize(uLength) { m_V.pbsz_const = v; }
    variant_view( const std::string& v) : m_uType(variant_type::eTypeString), m_uSize(v.length()) { m_V.pbsz_const = v.c_str(); }
    variant_view( const std::string_view& v) : m_uType(variant_type::eTypeString), m_uSize(v.length()) { m_V.pbsz_const = v.data(); }
+   variant_view( const std::u8string_view& v) : m_uType(variant_type::eTypeUtf8String), m_uSize(v.length()) { m_V.putf8_const = v.data(); }
    variant_view( const char* v, size_t uLength, bool ): m_uType(variant_type::eTypeString), m_uSize(uLength) { m_V.pbsz = const_cast<char*>(v); }
    variant_view( const wchar_t* v, size_t uLength) : m_uType(variant_type::eTypeWString), m_uSize(uLength) { m_V.pwsz_const = v; }
    variant_view( const unsigned char* v, size_t uLength) : m_uType(variant_type::eTypeBinary), m_uSize(uLength) { m_V.pb_const = v; }
+   variant_view( const unsigned char* v, gd::types::tag_uuid) : m_uType(variant_type::eTypeGuid), m_uSize(16) { m_V.pb_const = v; }
+   variant_view( const unsigned char* v, size_t uLength, gd::types::tag_binary) : m_uType(variant_type::eTypeBinary), m_uSize(uLength) { m_V.pb_const = v; }
    variant_view( const variant_type::utf8& v) : m_uType(variant_type::eTypeUtf8String), m_uSize(v.m_uLength) { m_V.pbsz_const = v.m_pbsz; }
    variant_view( const variant_type::utf8& v, unsigned int uType) : m_uType(uType), m_uSize(v.m_uLength) { m_V.pbsz_const = v.m_pbsz; }
    variant_view( const variant_type::uuid& v) : m_uType(variant_type::eTypeGuid), m_uSize(16) { m_V.pb_const = v.m_pbUuid; }
@@ -201,6 +204,7 @@ public:
    operator const unsigned char*() const { assert(type_number() == variant_type::eTypeNumberGuid || type_number() == variant_type::eTypeNumberBinary); return m_V.pb; }
 
    operator std::string_view() const { assert(type_number() == variant_type::eTypeNumberString || type_number() == variant_type::eTypeNumberUtf8String || type_number() == variant_type::eTypeNumberJson || type_number() == variant_type::eTypeNumberXml ); return std::string_view( m_V.pbsz, m_uSize ); }
+   operator gd::types::uuid() const { assert(type_number() == variant_type::eTypeNumberGuid || type_number() == variant_type::eTypeNumberBinary ); return gd::types::uuid( m_V.pb ); }
 
    bool operator==( bool v_ ) const { return compare( variant_view( v_ ) ); }
    bool operator==( const variant_view& o ) const { return compare( o ); }
@@ -309,7 +313,9 @@ public:
    // ## as_* methods, similar to C++ stl to_
    bool as_bool() const { return get_bool(); }
    int as_int() const { return get_int(); }
+   int32_t as_int32() const { return get_int(); }
    unsigned as_uint() const { return get_uint(); }
+   uint32_t as_uint32() const { return get_uint(); }
    int64_t as_int64() const { return get_int64(); }
    uint64_t as_uint64() const { return get_uint64(); }
    double as_double() const { return get_decimal(); }
@@ -369,6 +375,11 @@ public:
    bool is_number() const { return m_uType & (variant_type::eGroupInteger | variant_type::eGroupDecimal) ? true : false; }
    bool is_string() const { return (m_uType & variant_type::eGroupString ? true : false); }
    bool is_binary() const { return (m_uType & variant_type::eGroupBinary ? true : false); }
+
+   bool is_int32() const noexcept { return variant_type::eTypeNumberInt32 == type_number(); }
+   bool is_int64() const noexcept { return variant_type::eTypeNumberInt64 == type_number(); }
+   bool is_uint32() const noexcept { return variant_type::eTypeNumberUInt32 == type_number(); }
+   bool is_uint64() const noexcept { return variant_type::eTypeNumberUInt64 == type_number(); }
 
    bool is_08() const noexcept   { return m_uType & variant_type::eGroupSize08; }
    bool is_16() const noexcept   { return m_uType & variant_type::eGroupSize16; }
@@ -667,7 +678,7 @@ variant_view to_variant_view_g( const VARIANT& v_, variant_type::tag_std_variant
 }
 
 
-// �'static_assert( sizeof(_variant) == 16, "_variant size isn't 16 bytes" );
+// 'static_assert( sizeof(_variant) == 16, "_variant size isn't 16 bytes" );
 static_assert( sizeof(variant_view) == 16, "variant size isn't 16 bytes" );
 static_assert( sizeof( gd::variant ) == sizeof( gd::variant_view ), "variant and variant_view have different sizes!!!" );
 

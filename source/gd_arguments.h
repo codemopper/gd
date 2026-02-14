@@ -372,6 +372,7 @@ public:
       argument(arguments::enumType eType,const uint8_t* p) : m_eType(eType) { m_unionValue.puch = p; }
       argument(unsigned uType,const uint8_t* p) : m_eType((enumType)uType) { m_unionValue.puch = p; }
       argument(const uint8_t* p, enumType eType) : m_eType(eType) { m_unionValue.puch = p; }
+      argument(const uint8_t* p, uint32_t uSize, enumType eType) : m_eType(eType), m_uSize(uSize) { m_unionValue.puch = p; }
 
 
       //@}
@@ -860,8 +861,24 @@ public: //0TAG0construct.arguments
       append_argument(pairArgument.first, _argument);
       append_argument(arguments...);
    }
-   arguments( std::initializer_list<std::pair<std::string_view, gd::variant>> listPair); // construct arguments with vector like {{},{}}
-   arguments( std::initializer_list<std::pair<std::string_view, gd::variant_view>> listPair, tag_view ); // light weight version to construct arguments with vector like {{},{}}
+
+   /// -----------------------------------------------------------------------
+   /// @brief Constructs an arguments object from an initializer list of string-variant pairs.
+   template<std::ranges::input_range RANGE>
+   requires std::convertible_to<std::ranges::range_value_t<RANGE>, std::pair<std::string_view, gd::variant>>
+   arguments(RANGE&& listPair) {  common_construct(std::forward<RANGE>(listPair)); }
+   /// The Bridge for {{key, val}} syntax
+   arguments(std::initializer_list<std::pair<std::string_view, gd::variant>> listPair) { common_construct(listPair); }
+
+
+   /// -----------------------------------------------------------------------
+   /// @brief Constructs an arguments object from an initializer list of string-variant_view pairs with a tag_view.
+   template<std::ranges::input_range RANGE>
+   requires std::convertible_to<std::ranges::range_value_t<RANGE>, std::pair<std::string_view, gd::variant_view>>
+   arguments(RANGE&& listPair, tag_view view_) {  common_construct(std::forward<RANGE>(listPair), view_); }
+   /// The Bridge for {{key, val}} syntax
+   arguments(std::initializer_list<std::pair<std::string_view, gd::variant_view>> listPair, tag_view view_) { common_construct(listPair, view_); }
+
    arguments( std::vector<std::pair<std::string_view, gd::variant_view>> listPair, tag_view ); // light weight version to construct arguments with vector like {{},{}}
    arguments( const std::initializer_list<std::pair<std::string_view, gd::variant_view>>& listPair, const arguments& arguments_ );
    arguments( const arguments& arguments_, const std::initializer_list<std::pair<std::string_view, gd::variant_view>>& listPair );
@@ -904,13 +921,16 @@ public: //0TAG0construct.arguments
 protected:
    // common copy
    void common_construct(const arguments& o) {
-      if( o.m_uLength )
+      if( o.m_uLength > 0 )
       {
-         reserve_no_copy(o.m_uLength);
+         if( o.m_uLength > m_uBufferLength ) { reserve_no_copy(o.m_uLength); }
          memcpy(m_pBuffer, o.m_pBuffer, o.m_uLength);
+         m_uLength = o.m_uLength;                                                                  assert( m_uLength <= m_uBufferLength );
       }
-      m_bOwner = o.m_bOwner;
-      m_uLength = o.m_uLength;
+      else
+      {
+         clear();
+      }
    }
 
    void common_construct(arguments&& o) noexcept {
@@ -920,6 +940,19 @@ protected:
       o.m_uLength = 0;
       o.m_uBufferLength = 0;
    }
+
+   template<typename RANGE>
+   void common_construct( RANGE&& range_ ) {                                  // std::pair<std::string_view, gd::variant>
+      zero(); 
+      for(const auto& it : range_) { append_argument(it); }
+   }
+
+   template<typename RANGE>
+   void common_construct( RANGE&& range_, tag_view view_ ) {                  // std::pair<std::string_view, gd::variant_view>
+      zero(); 
+      for(const auto& it : range_) { append_argument(it, view_); }
+   }
+
 
    void zero() { buffer_set(); };
 
@@ -989,13 +1022,17 @@ public:
    /// return last position for buffer where values are stored
    pointer get_buffer_end() { return m_pBuffer + m_uLength; }
    const_pointer get_buffer_end() const { return m_pBuffer + m_uLength; }
+
+
+   /// return if object owns memory, if it does it should be deleted when arguments goes out of scope
+   bool is_owner() const noexcept { return m_bOwner; }
+   /// set if object owns memory, if it does it should be deleted when arguments goes out of scope
+   void set_owner( bool bOwner = true ) noexcept { m_bOwner = bOwner; }
+
 //@}
 
 /** \name OPERATION
 *///@{
-
-   // return if object owns memory, if it does it should be deleted when arguments goes out of scope
-   bool is_owner() const noexcept { return m_bOwner; }
 
    // ## @API [tag: append] [description: append data to arguments]
    //    note: remember that each value has its type and type in stream is just
@@ -1062,6 +1099,24 @@ public:
    arguments& append( const std::vector<std::pair<std::string,std::string>>& vectorStringValue );
    arguments& append( const std::vector<std::pair<std::string,gd::variant>>& vectorStringVariant );
    arguments& append( const std::vector<std::pair<std::string_view, gd::variant_view>>& vectorStringVariantView );
+
+   /// -----------------------------------------------------------------------
+   /// @brief appends an arguments object container or an initializer list of string-variant pairs.
+   template<std::ranges::input_range RANGE>
+   requires std::convertible_to<std::ranges::range_value_t<RANGE>, std::pair<std::string_view, gd::variant>>
+   arguments& append(RANGE&& rangePair) {  for( auto it : rangePair ) append_argument( it.first, it.second ); return *this; }
+   /// The Bridge for {{key, val}} syntax
+   arguments& append(std::initializer_list<std::pair<std::string_view, gd::variant>> listPair ) { for( auto it : listPair ) append_argument( it.first, it.second ); return *this; }
+
+   /// -----------------------------------------------------------------------
+   /// @brief appends an arguments object container or an initializer list of string-variant_view pairs.
+   template<std::ranges::input_range RANGE>
+   requires std::convertible_to<std::ranges::range_value_t<RANGE>, std::pair<std::string_view, gd::variant_view>>
+   arguments& append(RANGE&& rangePair, tag_view view_) {  for( auto it : rangePair ) append_argument( it.first, it.second, view_ ); return *this; }
+   /// The Bridge for {{key, val}} syntax
+   arguments& append(std::initializer_list<std::pair<std::string_view, gd::variant_view>> listPair, tag_view view_ ) { for( auto it : listPair ) append_argument( it.first, it.second, view_ ); return *this; }
+
+
    arguments& append( const std::vector<std::pair<std::string_view,std::string_view>>& vectorStringValue, tag_parse_type );
    arguments& append( const std::vector<std::pair<std::string,std::string>>& vectorStringValue, tag_parse_type );
    std::pair<bool, std::string>  append( const std::string_view& stringValue, tag_parse );
@@ -1088,6 +1143,8 @@ public:
    arguments& append_argument(const variant& variantValue);
    arguments& append_argument(const variant_view& variantviewValue, tag_view);
 
+   arguments& append_argument(std::string_view stringName, const gd::variant& variantValue);
+   /*
    arguments& append_argument(std::string_view stringName, const gd::variant& variantValue) {
       auto argumentValue = get_argument_s(variantValue);
       const_pointer pData = (argumentValue.type_number() <= eTypeNumberPointer ? (const_pointer)&argumentValue.m_unionValue : (const_pointer)argumentValue.get_raw_pointer());
@@ -1095,6 +1152,7 @@ public:
       if( uType > ARGUMENTS_NO_LENGTH ) { uType |= eValueLength; }
       return append(stringName, uType, pData, argumentValue.length());
    }
+   */
 
    arguments& append_argument(const std::string_view& stringName, const gd::variant_view& variantValue);
    arguments& append_argument(const std::string_view& stringName, const gd::variant_view& variantValue, tag_view) { return append_argument( stringName, variantValue ); }
@@ -1127,6 +1185,7 @@ public:
    arguments& append_object( const OBJECT object ) { return append_object( std::string_view(), object ); }
 
    arguments& push_back( const variant_view& variantviewValue ) { return append_argument(variantviewValue, tag_view{}); }
+   arguments& push_back( std::string_view stringName, const variant& variantValue ) { return append_argument( stringName, variantValue); }
    arguments& push_back( std::string_view stringName, const variant_view& variantviewValue ) { return append_argument( stringName, variantviewValue, tag_view{}); }
    arguments& push_back( const std::pair<std::string_view, gd::variant_view>& pairArgument ) { return append_argument(pairArgument, tag_view{}); }
 
@@ -1258,6 +1317,9 @@ public:
    [[nodiscard]] bool compare(const std::pair<std::string_view, gd::variant_view>& pairMatch) const { return find(pairMatch) != nullptr; }
    [[nodiscard]] bool compare(const std::string_view& stringName, const arguments& argumentsCompareTo) const;
    [[nodiscard]] bool compare_exists(const arguments& argumentsExists) const { return compare_exists_s( *this, argumentsExists ); }
+
+   bool iif( const std::string_view& stringName, std::function< void( const gd::variant_view& ) > callback_ ) const;
+
 
    // ## @API [tag: walk, iterator] [description: walk between items in arguments, moves pointer to next value, can't go back]
 

@@ -1,3 +1,5 @@
+
+#include "gd_utf8.h"
 #include "gd_sql_value.h"
 
 #include "gd_sql_query.h"
@@ -704,6 +706,12 @@ std::string query::sql_get_with() const
    return stringWith;
 }
 
+std::string query::sql_get_returning() const
+{
+   std::string stringReturning; // returning section
+   return stringReturning;
+}
+
 
 std::string query::sql_get(enumSql eSql) const
 {
@@ -1028,6 +1036,133 @@ std::pair<bool, std::string> query::values_get_s( const std::vector< gd::variant
 
    return { true, std::move( stringValues ) };
 }
+
+std::pair<bool, std::string> query::values_get_s( std::vector< std::pair<uint32_t, gd::variant_view> >& vectorValue, unsigned uDialect )
+{
+   std::string stringValues;
+   stringValues.reserve( vectorValue.size() * 16 );                          // preallocate to avoid smaller allocations, this is just one estimate
+
+   for( auto it = std::begin( vectorValue ), itEnd = std::end( vectorValue ); it != itEnd; it++ )
+   {
+      if( stringValues.empty() == false ) { stringValues += ','; }
+      unsigned uType = it->first;
+      if( uType == 0 )                                                        // default is string
+      {
+         append_g( it->second, stringValues );
+      }
+      else
+      {
+         if( it->second.is_char_string() == true )
+         {
+            append_g( it->second, uType, uDialect, stringValues );
+         }
+         else if( it->second.is_integer() == true )
+         {
+            append_g( it->second, uType, uDialect, stringValues );
+         }
+      }
+   }
+
+   return { true, std::move( stringValues ) };
+}
+
+/** --------------------------------------------------------------------------
+ * @brief Generates a RETURNING or OUTPUT clause string for SQL queries based on the specified SQL dialect.
+ * @param vectorValue A vector of column name pairs, where the first element is the column name and the second element is an optional alias.
+ * @param stringReturning The output string that will contain the generated RETURNING or OUTPUT clause.
+ * @param uDialect The SQL dialect identifier that determines whether to use OUTPUT (SQL Server) or RETURNING (default) syntax.
+ */
+void query::returning_get_s( const gd::borrow::vector< std::pair< std::string_view, std::string_view > >& vectorValue, std::string& stringReturning, unsigned uDialect )
+{
+   auto add_returning = []( const auto& vectorValue, std::string& stringReturning ) -> void {
+      unsigned uCount = 0;
+      for( auto it : vectorValue ) 
+      {
+         if( uCount > 0 ) { stringReturning += ','; }
+         stringReturning += it.first;
+         if( it.second.empty() == false )
+         {
+            stringReturning += " AS ";
+            stringReturning += it.second;
+         }
+
+         uCount++;
+      }
+   };
+
+   switch( uDialect )
+   {
+   case eSqlDialectSqlServer:
+      stringReturning += "OUTPUT ";
+      add_returning( vectorValue, stringReturning );
+      break;
+   default:
+      stringReturning += "RETURNING ";
+      add_returning( vectorValue, stringReturning );
+      break;
+   }
+}
+
+/**
+ * @brief Constructs a RETURNING clause string for a query based on the specified column and dialect.
+ * 
+ * Constructs gd::borrow::vector< std::pair< std::string_view, std::string_view > > from stringColumn and 
+ * calls the other overload of returning_get_s to generate the RETURNING clause string.
+ * 
+ * It splits the stringColumn using the specified delimiters for columns and aliases, and creates
+ * pairs of column names and aliases to be used in the RETURNING clause. The generated clause is stored in stringReturning.
+ * 
+ * ```cpp
+ * // Example usage:
+ * using namespace gd::sql;
+ * std::string stringColumn = "FId;FName,Name;FAge";
+ * std::string stringReturning;
+ * query::returning_get_s(stringColumn, stringReturning, eSqlDialectPostgreSQL, ';', ',');
+ * ```
+ * 
+ * @param stringColumn The column specification to include in the RETURNING clause.
+ * @param stringReturning The output string where the RETURNING clause will be stored or appended.
+ * @param uDialect The SQL dialect identifier used to format the clause appropriately.
+ * @param iSplitColumn The delimiter character used to split column names.
+ * @param iSplitAlias The delimiter character used to split column aliases.
+ */
+void query::returning_get_s( std::string_view stringColumn, std::string& stringReturning, unsigned uDialect, char iSplitColumn, char iSplitAlias )
+{
+   std::array< std::pair< std::string_view, std::string_view >, 32 > arrayColumn; // used as buffer to gd::borrow::vector
+   gd::borrow::vector< std::pair< std::string_view, std::string_view > > vectorValue( arrayColumn );
+
+   if( stringColumn.find( iSplitColumn ) != std::string_view::npos )
+   {   
+      auto vectorColumn = gd::utf8::split( stringColumn, iSplitColumn );
+      for( auto it : vectorColumn )
+      {
+         std::string_view stringAlias;
+         std::string_view stringName;
+         if( it.find( iSplitAlias ) != std::string_view::npos )
+         {
+            auto vectorColumnAlias = gd::utf8::split( it, iSplitAlias );
+            if( vectorColumnAlias.size() == 2 )
+            {
+               stringName = vectorColumnAlias[0];
+               stringAlias = vectorColumnAlias[1];
+            }
+            else { stringName = it; }
+         }
+         else
+         {
+            stringName = it;
+         }
+         vectorValue.push_back( { stringName, stringAlias } );
+      }
+   }
+   else
+   {
+      vectorValue.push_back( { stringColumn, std::string_view() } );
+   }
+
+   returning_get_s( vectorValue, stringReturning, uDialect );
+}
+
 
 /** ---------------------------------------------------------------------------
  * @brief Variant Values in vector is converted to string in a format that works for sql 

@@ -931,42 +931,6 @@ arguments::arguments(std::pair<std::string_view, gd::variant> pairArgument)
    append_argument(pairArgument.first, _argument);
 }
 
-
-/** ---------------------------------------------------------------------------
- * @brief Constructs an arguments object from an initializer list of string-variant pairs.
- * @param listPair An initializer list of pairs containing string views and gd::variant values.
- * Initializes the object by appending each pair from the list.
- */
-arguments::arguments(std::initializer_list<std::pair<std::string_view, gd::variant>> listPair)
-{
-   zero();
-   for( auto it : listPair ) append_argument(it);
-}
-
-/** ---------------------------------------------------------------------------
- * @brief Constructs an arguments object from an initializer list of string-variant_view pairs with a tag_view.
- * @param listPair An initializer list of pairs containing string views and gd::variant_view values.
- * @param tag_view A tag indicating the use of variant_view (distinguishes constructor overload).
- * Initializes the object by appending each pair from the list using the tag_view overload.
- */
-arguments::arguments( std::initializer_list<std::pair<std::string_view, gd::variant_view>> listPair, tag_view )
-{
-   zero();
-   for( auto it : listPair ) append_argument( it, tag_view{} );
-}
-
-/** ---------------------------------------------------------------------------
- * @brief Constructs an arguments object from a vector of string-variant_view pairs with a tag_view.
- * @param listPair A vector of pairs containing string views and gd::variant_view values.
- * @param tag_view A tag indicating the use of variant_view (distinguishes constructor overload).
- * Initializes the object by appending each pair from the vector using the tag_view overload.
- */
-arguments::arguments( std::vector<std::pair<std::string_view, gd::variant_view>> vectorPair, tag_view )
-{
-   zero();
-   append(vectorPair);
-}
-
 /** ---------------------------------------------------------------------------
 * @brief Constructs an arguments object from an initializer list and another arguments object.
 *
@@ -1301,6 +1265,65 @@ arguments& arguments::append(const char* pbszName, uint32_t uNameLength, argumen
 #endif // _DEBUG
    return *this;
 }
+
+/*----------------------------------------------------------------------------- append_argument */ /**
+ * Add argument from variant_view
+ * \param stringName argument name
+ * \param variantValue argument value added
+ * \return arguments::arguments& reference to this if nested operations is wanted
+ */
+arguments& arguments::append_argument(std::string_view stringName, const gd::variant& variantValue)
+{
+   auto argumentValue = get_argument_s(variantValue);
+   const_pointer pData = (argumentValue.type_number() <= eTypeNumberPointer ? (const_pointer)&argumentValue.m_unionValue : (const_pointer)argumentValue.get_raw_pointer());
+   unsigned uType = argumentValue.type_number();                               // get type for value
+   unsigned uLength;                                                           // length for value
+   if( stringName.empty() == false )                                           // if name is given then add name to value
+   {
+      if( uType > ARGUMENTS_NO_LENGTH )
+      {
+         if( uType != eTypeNumberWString )
+         {
+            if( uType >= eTypeNumberString && uType <= eTypeNumberBinary ) { uType |= eValueLength; }
+
+            uLength = variantValue.length() + get_string_zero_terminate_length_s(uType);
+         }
+         else
+         {
+            uType |= eValueLength;
+            uLength = (variantValue.length() * sizeof(char16_t)) + get_string_zero_terminate_length_s(uType);
+         }
+
+         return append(stringName, uType, pData, uLength);
+      }
+      else
+      {
+         return append(stringName, uType, pData, argumentValue.length());
+      }
+   }
+
+   // ## no name, just add value ............................................
+
+   if( uType > ARGUMENTS_NO_LENGTH )
+   {
+      if( uType != eTypeNumberWString )
+      {
+         if( uType >= eTypeNumberString && uType <= eTypeNumberBinary ) { uType |= eValueLength; }
+
+         uLength = variantValue.length() + get_string_zero_terminate_length_s(uType);
+      }
+      else
+      {
+         uType |= eValueLength;
+         uLength = (variantValue.length() * sizeof(char16_t)) + get_string_zero_terminate_length_s(uType);
+      }
+
+      return append(uType, pData, uLength);
+   }
+
+   return append(uType, pData, argumentValue.length());
+}
+
 
 /*----------------------------------------------------------------------------- append_argument */ /**
  * Add argument from variant, this value isn't named
@@ -3743,7 +3766,8 @@ gd::variant_view arguments::get_variant_view_s(const arguments::argument& argume
       return gd::variant_view(value.d);
       break;
    case arguments::eTypeNumberGuid:
-      return gd::variant_view(value.pbsz, (size_t)argumentValue.length());
+                                                                                                   assert( argumentValue.length() == 16 );
+      return gd::variant_view(value.puch, gd::types::tag_uuid{});
       break;
    case arguments::eTypeNumberString: {                                                            assert( (size_t)value.pbsz % 4 == 0 );
          size_t uSize = (size_t)*(uint32_t*)(value.pbsz - sizeof(uint32_t));
@@ -3759,6 +3783,9 @@ gd::variant_view arguments::get_variant_view_s(const arguments::argument& argume
          size_t uSize = (size_t)*(uint32_t*)(value.pwsz - sizeof(uint32_t));
          return gd::variant_view(value.pwsz, uSize);
       }
+      break;
+   case arguments::eTypeNumberBinary:
+      return gd::variant_view(value.puch, (size_t)argumentValue.length(), gd::types::tag_binary{});
       break;
    default:
       assert(false);
@@ -3792,6 +3819,9 @@ arguments::argument arguments::get_argument_s(const gd::variant& variantValue)
 {
    switch( variantValue.type_number() )
    {
+   case variant_type::eTypeNumberUnknown:
+      return arguments::argument();
+      break;
    case variant_type::eTypeNumberBool:
       return arguments::argument( (bool)variantValue );
       break;

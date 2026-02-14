@@ -239,7 +239,8 @@ public:
       auto operator-( std::ptrdiff_t iDistance ) { return iterator_row( (std::ptrdiff_t)m_uRow - iDistance, m_ptable ); }
 
       gd::variant_view cell_get_variant_view( unsigned uIndex ) const { return m_ptable->cell_get_variant_view( m_uRow, uIndex ); }
-      gd::variant_view cell_get_variant_view( const std::string_view& stringName ) const { return m_ptable->cell_get_variant_view( m_uRow, stringName ); }
+      gd::variant_view cell_get_variant_view( std::string_view stringName ) const { return m_ptable->cell_get_variant_view( m_uRow, stringName ); }
+      gd::variant_view cell_get_variant_view( std::string_view stringName, tag_not_null ) const { return m_ptable->cell_get_variant_view( m_uRow, stringName, tag_not_null{} ); }
       std::vector< gd::variant_view > cell_get_variant_view() const { return m_ptable->cell_get_variant_view( m_uRow ); }
 
       void cell_set( unsigned uColumn, const gd::variant_view& variantviewValue ) { m_ptable->cell_set( m_uRow, uColumn, variantviewValue ); }
@@ -272,7 +273,8 @@ public:
       const_iterator_row operator-( int64_t iDistance ) { return const_iterator_row( m_uRow - iDistance, m_ptable ); }
 
       gd::variant_view cell_get_variant_view( unsigned uIndex ) const { return m_ptable->cell_get_variant_view( m_uRow, uIndex ); }
-      gd::variant_view cell_get_variant_view( const std::string_view& stringName ) const { return m_ptable->cell_get_variant_view( m_uRow, stringName ); }
+      gd::variant_view cell_get_variant_view( std::string_view stringName ) const { return m_ptable->cell_get_variant_view( m_uRow, stringName ); }
+      gd::variant_view cell_get_variant_view( std::string_view stringName, tag_not_null ) const { return m_ptable->cell_get_variant_view( m_uRow, stringName, tag_not_null{} ); }
       std::vector< gd::variant_view > cell_get_variant_view() const { return m_ptable->cell_get_variant_view( m_uRow ); }
 
       uint64_t m_uRow;
@@ -469,6 +471,9 @@ public:
    std::vector<std::string_view> column_get_name(const std::vector<unsigned>& vectorColumn) const;
    std::string_view column_get_alias( unsigned uIndex ) const;
    void column_get( unsigned uIndex, argument::column& column_ ) const;
+   
+   bool column_validate_type( unsigned uIndex, gd::variant_view v_ ) const { return m_pcolumns->ctype_number( uIndex ) == v_.type_number(); }
+   bool column_validate_size( unsigned uIndex, gd::variant_view v_ ) const { return m_pcolumns->size( uIndex ) >= v_.length_in_bytes(); }
 
    /// Rename column
    std::string column_rename( unsigned uColumn, const std::string_view& stringNewName );
@@ -728,6 +733,11 @@ public:
    /// get cell value using name or column index, if name then column gets index to speed up the process next time value is returned
    gd::variant_view cell_get_variant_view( uint64_t uRow, std::variant< unsigned, std::string_view >* pvariantColumn ) const noexcept;
 
+   gd::variant_view cell_get_variant_view( uint64_t uRow, const std::string_view& stringName, tag_not_null ) const noexcept;
+
+   /// get cell value using column indexes in container, values are placed in argumentsValue with name and value
+   void cell_get( uint64_t uRow, std::span<unsigned> spanColumn, gd::argument::arguments& argumentsValue ) const;
+
    unsigned cell_get_length( uint64_t uRow, unsigned uColumn ) const noexcept;
 
    // ## @API [tag: cell] [description: cell management methods]
@@ -740,6 +750,7 @@ public:
    void cell_set( uint64_t uRow, unsigned uColumn, const gd::variant_view& variantviewValue, tag_convert );
    void cell_set( uint64_t uRow, const std::string_view& stringName, const gd::variant_view& variantviewValue, tag_convert );
    void cell_set( uint64_t uRow, const std::string_view& stringAlias, const gd::variant_view& variantviewValue, tag_convert, tag_alias );
+   void cell_set( uint64_t uRow, const std::string_view& stringName, const gd::variant_view& variantviewValue, tag_spill );
    void cell_set( uint64_t uRow, unsigned uColumn, const std::vector<gd::variant_view>& vectorValue );
    void cell_set( uint64_t uRow, unsigned uColumn, const std::vector<gd::variant_view>& vectorValue, tag_convert );
    void cell_set( uint64_t uRow, const std::string_view& stringName, const std::vector<gd::variant_view>& vectorValue ) { cell_set( uRow, column_get_index(stringName), vectorValue ); }
@@ -767,6 +778,7 @@ public:
    int64_t find( unsigned uColumn, const gd::variant_view& variantviewFind ) const noexcept { return find( uColumn, 0, get_row_count(), variantviewFind ); }
    int64_t find( const std::string_view& stringName, const gd::variant_view& variantviewFind ) const noexcept { return find_variant_view( stringName, 0, get_row_count(), variantviewFind ); }
    int64_t find( unsigned uColumn, bool bAscending, const gd::variant_view& variantviewFind ) const noexcept { return find_variant_view( uColumn, bAscending, 0, get_row_count(), variantviewFind ); }
+   int64_t find( unsigned uColumn, uint64_t uStartRow, const gd::variant_view& variantviewFind ) const noexcept { return find( uColumn, uStartRow, get_row_count() - uStartRow, variantviewFind ); }
    int64_t find( unsigned uColumn, uint64_t uStartRow, uint64_t uCount, const gd::variant_view& variantviewFind ) const noexcept;
 
    int64_t find_variant_view( unsigned uColumn, uint64_t uStartRow, uint64_t uCount, const gd::variant_view& variantviewFind ) const noexcept;

@@ -96,7 +96,9 @@ using tag_member = gd::types::tag_member;
 /// tag dispatcher for speed up unnecessary assignments
 struct tag_undefined {};
 /// tag dispatcher used to construct object where null values are valid
-struct tag_null {};
+using tag_null = gd::types::tag_null;
+/// tag dispatcher used to construct object where null values are not valid
+using tag_not_null = gd::types::tag_not_null;
 /// tag dispatcher to mark to use meta information
 struct tag_meta {};
 /// tag dispatcher to create object with all meta data turned on
@@ -111,6 +113,8 @@ using tag_copy = gd::types::tag_copy;
 using tag_convert = gd::types::tag_convert;
 /// for adjusting methods
 using tag_adjust = gd::types::tag_adjust;
+/// Used for functionality when value for some reason do not fit within reserved storage and need to "spill", how it spills depends on context
+struct tag_spill {};
 /// prepare (allocate internal buffers) table to be ready for work
 struct tag_prepare {};
 /// use name in operation

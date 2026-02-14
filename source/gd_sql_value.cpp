@@ -94,7 +94,7 @@ void append_ascii( const uint8_t* pbszAscii, size_t uLength, std::string& string
  * @brief Append utf8 (that is the default) text to string object
  * @param pbszUft8 utf8 formated text appended to text
  * @param stringSql utf8 text is appended to string
-*/
+ */
 void append_utf8( const uint8_t* pbszUft8, std::string& stringSql )
 {
    while( *pbszUft8 )
@@ -105,6 +105,26 @@ void append_utf8( const uint8_t* pbszUft8, std::string& stringSql )
       pbszUft8++;
    }
 }
+
+/** ---------------------------------------------------------------------------
+ * @brief Append utf8 (that is the default) text to string object
+ * @param pbszUft8 utf8 formated text appended to text
+ * @param uLength utf8 text length
+ * @param stringSql utf8 text is appended to string
+ */
+void append_utf8( const uint8_t* puUft8, std::size_t uLength, std::string& stringSql )
+{                                                                                                  assert( uLength < 100'000'000 ); // realistic?
+   const uint8_t* puPosition = puUft8;
+      const uint8_t* puEnd = puUft8 + uLength;
+   while( puPosition < puEnd )
+   {
+      if( *puPosition != '\'' ) stringSql += (char)*puPosition;
+      else                      stringSql += std::string_view{"''"};
+
+      puPosition++;
+   }
+}
+
 
 static const uint8_t binary_pszHEX_s[16] = { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F' };
                                   
@@ -392,7 +412,7 @@ void append_g( const gd::variant_view& variantValue, std::string& stringSql )
    case eTypeNumberUtf8String: 
    {
       stringSql += '\'';
-      append_utf8( (uint8_t*)value.pb, stringSql );
+      append_utf8( (uint8_t*)value.pb, variantValue.length(), stringSql);
       stringSql += '\'';
    }
    break;
@@ -528,6 +548,133 @@ void append_g( const gd::variant_view& variantValue, std::string& stringSql, tag
 
 }
 
+/** --------------------------------------------------------------------------
+ * @brief Append string_view value to string in a format that works for sql
+ * 
+ * Methods used to check type and append string to sql string
+ * gd::types::is_binary_g( uType )
+ * gd::types::is_number_g( uType )
+ * gd::types::is_boolean_g( uType )
+ * 
+ * This function assumes stringValue is already in the correct text format.
+ * It handles:
+ * - Numbers (int, float, etc.) - appended as-is without quotes
+ * - Booleans - appended as-is (should be '0' or '1') without quotes  
+ * - Strings - wrapped in single quotes with internal quotes doubled
+ * - Binary - formatted according to database-specific syntax
+ * 
+ * @param stringValue value to append (already in correct format)
+ * @param uType type of the value (from gd::types)
+ * @param uDialect SQL dialect to use for formatting
+ * @param stringSql output string to append formatted value to
+ */
+void append_g( std::string_view stringValue, unsigned uType, unsigned uDialect, std::string& stringSql )
+{
+   using namespace gd::types;
+   
+   // Handle numbers and booleans - append directly without quotes
+   // Numbers: integers, floats, decimals
+   // Booleans: 0 or 1 (treated as numbers in SQL)
+   if( is_number_g( uType ) || is_boolean_g( uType ) )
+   {
+      stringSql.append( stringValue.data(), stringValue.length() );  return;
+   }
+   
+   // Handle binary types - different databases have different binary literal syntax
+   if( is_binary_g( uType ) )
+   {
+      const uint8_t* puBinary = reinterpret_cast<const uint8_t*>( stringValue.data() );
+      unsigned uLength = static_cast<unsigned>( stringValue.length() );
+      
+      switch( uDialect )
+      {
+      case eSqlDialectPostgreSql:
+      case eSqlDialectCockroachDB:
+      case eSqlDialectRedshift:
+         // PostgreSQL family uses: E'\\x...' or '\\x...' format
+         stringSql += "'\\\\x";
+         append_binary( puBinary, uLength, stringSql );
+         stringSql += '\'';
+         break;
+         
+      case eSqlDialectMySql:
+      case eSqlDialectMariaDB:
+         // MySQL/MariaDB uses: X'...' or 0x... format (X'...' is preferred)
+         stringSql += "X'";
+         append_binary( puBinary, uLength, stringSql );
+         stringSql += '\'';
+         break;
+         
+      case eSqlDialectSqlServer:
+         // SQL Server uses: 0x... format
+         stringSql += "0x";
+         append_binary( puBinary, uLength, stringSql );
+         break;
+         
+      case eSqlDialectOracle:
+         // Oracle uses: HEXTORAW('...') format
+         stringSql += "HEXTORAW('";
+         append_binary( puBinary, uLength, stringSql );
+         stringSql += "')";
+         break;
+         
+      case eSqlDialectSqlite:
+         // SQLite uses: X'...' format
+         stringSql += "X'";
+         append_binary( puBinary, uLength, stringSql );
+         stringSql += '\'';
+         break;
+         
+      case eSqlDialectDB2:
+         // DB2 uses: BLOB(X'...') or BX'...' format
+         stringSql += "BX'";
+         append_binary( puBinary, uLength, stringSql );
+         stringSql += '\'';
+         break;
+         
+      default:
+         // Default to PostgreSQL-style for ANSI compliance and cloud warehouses
+         stringSql += "'\\\\x";
+         append_binary( puBinary, uLength, stringSql );
+         stringSql += '\'';
+         break;
+      }
+      
+      return;
+   }
+   
+   // Handle string types - need to properly escape quotes
+   // All SQL databases use single quotes for strings and escape single quotes by doubling them
+   stringSql += '\'';
+   
+   // Fast path: scan for quotes to decide if we need special handling
+   const char* piData = stringValue.data();
+   const char* piEnd = piData + stringValue.length();
+   const char* piStart = piData;
+   
+   // Scan and copy in chunks, doubling quotes as we find them
+   while( piData < piEnd )
+   {
+      if( *piData == '\'' )
+      {
+         // Copy everything up to (but not including) the quote
+         if( piData > piStart )
+         {
+            stringSql.append( piStart, piData - piStart );
+         }
+         // Add doubled quote
+         stringSql += "''";
+         piData++;
+         piStart = piData; // Reset start to character after quote
+      }
+      else { piData++; }
+   }
+   
+   // Copy any remaining characters
+   if( piData > piStart ) { stringSql.append( piStart, piData - piStart ); }
+   
+   stringSql += '\'';
+}
 
 
 
@@ -577,6 +724,128 @@ std::tuple<uint64_t, std::string, std::string> make_bulk_g( const std::string_vi
 }
 
 namespace {
+   /** ---------------------------------------------------------------------------
+    * @brief Parse placeholder and extract name and format specifier
+    * @param stringPlaceholder full placeholder text (e.g., "value:%.2f")
+    * @param stringName output parameter for variable name
+    * @param stringFormat output parameter for format specification
+   */
+   void get_placeholder( const std::string_view& stringPlaceholder, std::string& stringName, std::string& stringFormat )
+   {
+      stringName.clear();
+      stringFormat.clear();
+   
+      // ## Find colon separator between name and format and replace
+
+      auto uColonPosition = stringPlaceholder.find(':');
+      
+      if( uColonPosition == std::string_view::npos ) { stringName = stringPlaceholder; } // no format specifier
+      else
+      {
+         stringName = stringPlaceholder.substr(0, uColonPosition);
+         stringFormat = stringPlaceholder.substr(uColonPosition + 1);
+      }
+   }   
+}
+
+// @brief Replace placeholders in a string with values @see replace_g
+template <typename ARGUMENTS> 
+std::pair<bool,std::string> replace_implementation(const std::string_view& stringSource, const ARGUMENTS& argumentsValue, std::string& stringNew, tag_brace)
+{
+   using namespace gd::types;
+
+   unsigned uArgumentIndex = 0;
+   std::string stringName;       // current variable name that is replaced
+
+   for(auto it = std::begin( stringSource ), itEnd = std::end( stringSource ); it != itEnd; it++ )
+   {
+      if(*it != '{')
+      {
+         if(*it != '\'' ) stringNew += *it;                                    // no quote then copy character
+         else
+         {                                                                     // string is found, when in string we need to copy until end of string is found
+            const char* pbszFind = &(*it) + 1; 
+
+            // ## Check for double qoute, same as single .....................
+            if( *pbszFind == '\'' )
+            {
+               stringNew += *it;
+               it++;
+               continue;
+            }
+
+            pbszFind = gd::parse::strchr( pbszFind, '\'', gd::parse::sql{} );  // method used to find last quote, this method knows how to skip double quoutes
+            if(pbszFind != nullptr && pbszFind <= &(*(itEnd - 1)))
+            {
+               auto uSize = (pbszFind - &(*it));
+               stringNew.append( &(*it), uSize + 1);                           // append text including first quote (note + 1)
+               it += uSize;                                                    // move iterator to end of string
+            }
+            else
+            {
+               auto uSizeToEnd = std::distance(it, itEnd);                     // get distance to end of string
+               if( uSizeToEnd > 20 ) uSizeToEnd = 20;                          // limit to 20 characters
+               const auto* pbszPosition = &( *it );
+               return { false, std::string("no quote ending: ") + std::string( pbszPosition, uSizeToEnd) }; // end of string not found, return text and the first 20 characters
+            }
+         }
+      }
+      else
+      {
+         bool bRequired = false;                                               // mark if value is required
+         it++;
+         if( *it == '*' ) { bRequired = true; it++; }                          // check if value is required
+
+         // ## copy name of variable .........................................
+         stringName.clear();
+         while(*it != '}' && it != itEnd) { stringName += *it; it++; }
+
+         if(*it == '}')
+         {
+            bool bRaw = false;
+            gd::variant_view v_;
+
+            if(stringName.empty() == false)
+            {
+               char chFirst = stringName.at( 0 );                              // get first character
+               if(chFirst == '=')
+               {
+                  bRaw = true;
+                  stringName.erase( stringName.begin() );                      // remove equal character
+               }
+            }
+
+            if(stringName.empty() == true)
+            {
+               v_ = argumentsValue[uArgumentIndex].as_variant_view();
+               uArgumentIndex++;
+            }
+            else
+            {
+               // ## investigate type of name
+               char iFirst = stringName.at( 0 );                              // get first character
+
+               if( is_ctype_g( iFirst, "digit"_ctype ) == true)               // is value a number
+               {
+                  unsigned uIndex = std::stoul( stringName );                                      assert( uIndex < 0xffff ); //realistic ??
+                  v_ = argumentsValue[uIndex].as_variant_view();
+               }
+               else { v_ = argumentsValue[stringName].as_variant_view(); }
+            }
+
+            // ## check if value is required and if value is found return error
+            if( bRequired == true && v_.is_null() == true )
+            {
+               return { false, std::string("required value not found: ") + stringName };
+            }
+
+            if( bRaw == false ) append_g( v_, stringNew );                     // add value to work in sql
+            else                append_g( v_, stringNew, gd::sql::tag_raw{});  // add value to string without fix for quotes if needed for value
+         }// if(*it == '}') {
+      }
+   }// for(auto it = std::begin( stringSource ...
+
+   return { true, std::string{} };
 }
 
 /** ---------------------------------------------------------------------------
@@ -587,6 +856,8 @@ namespace {
  * (e.g., `{name}`). Special syntax like `{*name}` indicates a required value, and `{=name}` indicates raw value
  * insertion without SQL-specific escaping. The resulting string is built in `stringNew`. The function handles
  * quoted strings and skips them appropriately.
+ * 
+ * Note that double '' is replaced with single ' and works as a normal character
  *
  * @param stringSource The input string containing placeholders to be replaced (as a string_view).
  * @param argumentsValue The collection of arguments providing values for placeholder substitution.
@@ -646,99 +917,13 @@ namespace {
  */
 std::pair<bool,std::string> replace_g(const std::string_view& stringSource, const gd::argument::arguments& argumentsValue, std::string& stringNew, tag_brace)
 {
-   using namespace gd::types;
+   return replace_implementation(stringSource, argumentsValue, stringNew, tag_brace{});
+}
 
-   unsigned uArgumentIndex = 0;
-   std::string stringName;       // current variable name that is replaced
-
-   for(auto it = std::begin( stringSource ), itEnd = std::end( stringSource ); it != itEnd; it++ )
-   {
-      if(*it != '{')
-      {
-         if(*it != '\'' ) stringNew += *it;                                    // no quote then copy character
-         else
-         {                                                                     // string is found, when in string we need to copy until end of string is found
-            const char* pbszFind = &(*it) + 1; 
-            pbszFind = gd::parse::strchr( pbszFind, '\'', gd::parse::sql{} );  // method used to find last quote, this method knows how to skip double quoutes
-            if(pbszFind != nullptr && pbszFind <= &(*(itEnd - 1)))
-            {
-               auto uSize = (pbszFind - &(*it));
-               stringNew.append( &(*it), uSize + 1);                           // append text including first quote (note + 1)
-               it += uSize;                                                    // move iterator to end of string
-            }
-            else
-            {
-               auto uSizeToEnd = std::distance(it, itEnd);                     // get distance to end of string
-               if( uSizeToEnd > 20 ) uSizeToEnd = 20;                          // limit to 20 characters
-               const auto* pbszPosition = &( *it );
-               return { false, std::string("no quote ending: ") + std::string( pbszPosition, uSizeToEnd) }; // end of string not found, return text and the first 20 characters
-            }
-         }
-      }
-      else
-      {
-         bool bRequired = false;                                               // mark if value is required
-         it++;
-         if( *it == '*' ) { bRequired = true; it++; }                          // check if value is required
-
-         // ## copy name of variable
-         stringName.clear();
-         while(*it != '}' && it != itEnd)
-         {
-            stringName += *it;
-            it++;
-         }
-
-         if(*it == '}')
-         {
-            bool bRaw = false;
-            gd::variant_view v_;
-
-            if(stringName.empty() == false)
-            {
-               char chFirst = stringName.at( 0 );                              // get first character
-               if(chFirst == '=')
-               {
-                  bRaw = true;
-                  stringName.erase( stringName.begin() );                      // remove equal charact
-               }
-            }
-
-            if(stringName.empty() == true)
-            {
-               v_ = argumentsValue[uArgumentIndex].as_variant_view();
-               uArgumentIndex++;
-            }
-            else
-            {
-               // ## investigate type of name
-               char chFirst = stringName.at( 0 );                              // get first character
-
-
-               if( is_ctype_g( chFirst, "digit"_ctype ) == true)               // is value a number
-               {
-                  unsigned uIndex = std::stoul( stringName );                                   assert( uIndex < 0xffff ); //realistic ??
-                  v_ = argumentsValue[uIndex].as_variant_view();
-               }
-               else
-               {
-                  v_ = argumentsValue[stringName].as_variant_view();
-               }
-            }
-
-            // ## check if value is required and if value is found return error
-            if( bRequired == true && v_.is_null() == true )
-            {
-               return { false, std::string("required value not found: ") + stringName };
-            }
-
-            if( bRaw == false ) append_g( v_, stringNew );                     // add value to work in sql
-            else                append_g( v_, stringNew, gd::sql::tag_raw{});  // add value to string without fix for quotes if needed for value
-         }// if(*it == '}') {
-      }
-   }// for(auto it = std::begin( stringSource ...
-
-   return { true, std::string{} };
+/// @brief Replace placeholders in a string with values @see replace_g
+std::pair<bool,std::string> replace_g( const std::string_view& stringSource, const gd::argument::shared::arguments& argumentsValue, std::string& stringNew, tag_brace )
+{
+   return replace_implementation(stringSource, argumentsValue, stringNew, tag_brace{});
 }
 
 /** --------------------------------------------------------------------------- format `replace_g`

@@ -668,6 +668,7 @@ std::string arguments::argument::get_string() const
       break;
       case arguments::eTypeNumberWString:
       {
+         uint32_t uLength = length();
          gd::utf8::convert_utf16_to_uft8( reinterpret_cast<const uint16_t*>(m_unionValue.pwsz), s);
       }
       break;
@@ -917,18 +918,6 @@ arguments::arguments(std::pair<std::string_view, gd::variant> pairArgument)
    append_argument(pairArgument.first, _argument);
 }
 
-
-/** ---------------------------------------------------------------------------
- * @brief Constructs an arguments object from an initializer list of string-variant pairs.
- * @param listPair An initializer list of pairs containing string views and gd::variant values.
- * Initializes the object by appending each pair from the list.
- */
-arguments::arguments(std::initializer_list<std::pair<std::string_view, gd::variant>> listPair)
-{
-   zero();
-   for( auto it : listPair ) append_argument(it);
-}
-
 /** ---------------------------------------------------------------------------
  * @brief Constructs an arguments object from a pointer buffer and size, and an initializer list of string-variant pairs.
  * @param pBuffer Pointer to the buffer where the arguments will be stored.
@@ -949,17 +938,6 @@ arguments::arguments(pointer pBuffer, unsigned int uSize, std::initializer_list<
    for( auto it : listPair ) append_argument(it);
 }
 
-/** ---------------------------------------------------------------------------
- * @brief Constructs an arguments object from an initializer list of string-variant_view pairs with a tag_view.
- * @param listPair An initializer list of pairs containing string views and gd::variant_view values.
- * @param tag_view A tag indicating the use of variant_view (distinguishes constructor overload).
- * Initializes the object by appending each pair from the list using the tag_view overload.
- */
-arguments::arguments( std::initializer_list<std::pair<std::string_view, gd::variant_view>> listPair, tag_view )
-{
-   zero();
-   for( auto it : listPair ) append_argument( it, tag_view{} );
-}
 
 /** ---------------------------------------------------------------------------
  * @brief Constructs an arguments object from a pointer buffer and size, and an initializer list of string-variant_view pairs with a tag_view.
@@ -977,7 +955,8 @@ arguments::arguments( std::initializer_list<std::pair<std::string_view, gd::vari
  arguments arguments2_(array_, { {"key1", 1}, {"key2", "value"} }, gd::types::tag_view{});
  * @endcode
  */
-arguments::arguments( pointer pBuffer, unsigned int uSize, std::initializer_list<std::pair<std::string_view, gd::variant_view>> listPair, tag_view ) : arguments(pBuffer, uSize)
+arguments::arguments( pointer pBuffer, unsigned int uSize, std::initializer_list<std::pair<std::string_view, gd::variant_view>> listPair, tag_view ) 
+   : arguments(pBuffer, uSize)
 {
    for( auto it : listPair ) append_argument( it, tag_view{} );
 }
@@ -1317,6 +1296,65 @@ arguments& arguments::append_argument(const variant& variantValue)
 
    return append(uType, pData, argumentValue.length());
 }
+
+/*----------------------------------------------------------------------------- append_argument */ /**
+ * Add argument from variant_view
+ * \param stringName argument name
+ * \param variantValue argument value added
+ * \return arguments::arguments& reference to this if nested operations is wanted
+ */
+arguments& arguments::append_argument(std::string_view stringName, const gd::variant& variantValue)
+{
+   auto argumentValue = get_argument_s(variantValue);
+   const_pointer pData = (argumentValue.type_number() <= eTypeNumberPointer ? (const_pointer)&argumentValue.m_unionValue : (const_pointer)argumentValue.get_raw_pointer());
+   unsigned uType = argumentValue.type_number();                               // get type for value
+   unsigned uLength;                                                           // length for value
+   if( stringName.empty() == false )                                           // if name is given then add name to value
+   {
+      if( uType > ARGUMENTS_NO_LENGTH )
+      {
+         if( uType != eTypeNumberWString )
+         {
+            if( uType >= eTypeNumberString && uType <= eTypeNumberBinary ) { uType |= eValueLength; }
+
+            uLength = variantValue.length() + get_string_zero_terminate_length_s(uType);
+         }
+         else
+         {
+            uType |= eValueLength;
+            uLength = (variantValue.length() * sizeof(char16_t)) + get_string_zero_terminate_length_s(uType);
+         }
+
+         return append(stringName, uType, pData, uLength);
+      }
+      else
+      {
+         return append(stringName, uType, pData, argumentValue.length());
+      }
+   }
+
+   // ## no name, just add value
+
+   if( uType > ARGUMENTS_NO_LENGTH )
+   {
+      if( uType != eTypeNumberWString )
+      {
+         if( uType >= eTypeNumberString && uType <= eTypeNumberBinary ) { uType |= eValueLength; }
+
+         uLength = variantValue.length() + get_string_zero_terminate_length_s(uType);
+      }
+      else
+      {
+         uType |= eValueLength;
+         uLength = (variantValue.length() * sizeof(char16_t)) + get_string_zero_terminate_length_s(uType);
+      }
+
+      return append(uType, pData, uLength);
+   }
+
+   return append(uType, pData, argumentValue.length());
+}
+
 
 /*----------------------------------------------------------------------------- append_argument */ /**
  * Add argument from variant_view, this value isn't named
@@ -2277,7 +2315,7 @@ bool arguments::reserve(unsigned int uCount)
       if( m_uLength > 0 ) memcpy(pBuffer, m_pBuffer, m_uLength);
       if( is_owner() ) delete m_pBuffer;
 
-      m_bOwner = true;
+      set_owner( true );
       m_pBuffer = pBuffer;
       m_uBufferLength = uCount;
 
@@ -2354,14 +2392,18 @@ void arguments::remove_all(const std::string_view& stringName)
 }
 
 
+/*----------------------------------------------------------------------------- reserve_no_copy */ /**
+ * Reserve buffer for count bytes without copying old data, this is used when old data is not needed and can be discarded
+ * \param uCount number of bytes to reserve
+ * \return pointer to new buffer
+ */
 arguments::pointer arguments::_reserve_no_copy(unsigned int uCount)
 {
    unsigned char* pBuffer = new unsigned char[uCount];
-
-   if( is_owner() ) delete m_pBuffer;
+   if( is_owner() == true ) delete m_pBuffer;
 
    m_uLength = 0;
-   m_bOwner = true;
+   set_owner( true );
    m_pBuffer = pBuffer;
    m_uBufferLength = uCount;
 
@@ -2454,7 +2496,7 @@ void arguments::shrink_to_fit()
 
       if( is_owner() ) delete m_pBuffer;                                       // clear old buffer
 
-      m_bOwner = true;
+      set_owner( true );
       m_pBuffer = pBuffer;
 
       m_uBufferLength = m_uLength;                                             // set buffer size
@@ -2486,6 +2528,23 @@ void arguments::clear()
    m_uLength   = 0;
 }
 
+/** --------------------------------------------------------------------------
+ * @brief Check if value exists and if found then call callback
+ * @param stringName name of value to find
+ * @param callback_ callback to call if value is found
+ * @return true if value was found, false if not
+ */
+bool arguments::iif( const std::string_view& stringName, std::function< void( const gd::variant_view& ) > callback_ ) const
+{
+   gd::variant_view variantviewValue = get_variant_view( stringName );
+   if( variantviewValue.is_true() == true )
+   {
+      callback_( variantviewValue );
+      return true;
+   }
+   
+   return false;
+}
 
    
 /*----------------------------------------------------------------------------- get_param */ /**
@@ -2903,10 +2962,22 @@ arguments::argument arguments::get_argument_s(arguments::const_pointer pPosition
    case arguments::eTypeNumberWString: return arguments::argument(eTypeWString, (const uint8_t*)(const wchar_t*)(pPosition));
    case arguments::eTypeNumberBinary: return arguments::argument(eTypeGuid, (const uint8_t*)pPosition);
 
-   case (arguments::eTypeNumberString | arguments::eValueLength): return arguments::argument(eTypeString | arguments::eValueLength, (const uint8_t*)(const char*)(pPosition + sizeof(uint32_t)));
-   case (arguments::eTypeNumberUtf8String | arguments::eValueLength): return arguments::argument(eTypeUtf8String | arguments::eValueLength, (const uint8_t*)(const char*)(pPosition + sizeof(uint32_t)));
+   case (arguments::eTypeNumberString | arguments::eValueLength): {
+      uint32_t uSize = *(uint32_t*)pPosition;
+      const uint8_t* p_ = (const uint8_t*)pPosition + sizeof(uint32_t);
+      return arguments::argument( p_, uSize, enumType(eTypeString | arguments::eValueLength) );
+   }
+   case (arguments::eTypeNumberUtf8String | arguments::eValueLength): {
+      uint32_t uSize = *(uint32_t*)pPosition;
+      const uint8_t* p_ = (const uint8_t*)pPosition + sizeof(uint32_t);
+      return arguments::argument( p_, uSize, enumType(eTypeUtf8String | arguments::eValueLength) );
+   }
    case (arguments::eTypeNumberWString | arguments::eValueLength): return arguments::argument(eTypeWString | arguments::eValueLength, (const uint8_t*)(const wchar_t*)(pPosition + sizeof(uint32_t)));
-   case (arguments::eTypeNumberBinary | arguments::eValueLength): return arguments::argument(eTypeBinary | arguments::eValueLength, (const uint8_t*)pPosition + sizeof(uint32_t));
+   case (arguments::eTypeNumberBinary | arguments::eValueLength): {
+      uint32_t uSize = *(uint32_t*)pPosition;
+      const uint8_t* p_ = (const uint8_t*)pPosition + sizeof(uint32_t);
+      return arguments::argument( p_, uSize, enumType(eTypeBinary | arguments::eValueLength) );
+   }
 
    case arguments::eType_ParameterName:
    {
@@ -3418,6 +3489,9 @@ gd::variant arguments::get_variant_s(const arguments::argument& argumentValue)
    case arguments::eTypeNumberWString:
       return gd::variant(value.pwsz, (size_t)argumentValue.length() - sizeof(wchar_t) );
       break;
+   case arguments::eTypeNumberBinary:
+      return gd::variant(value.puch, (size_t)argumentValue.length(), gd::types::tag_binary{});
+      break;
    default:
       assert(false);
    }
@@ -3559,6 +3633,9 @@ gd::variant_view arguments::get_variant_view_s(const arguments::argument& argume
    case arguments::eTypeNumberWString:
       return gd::variant_view(value.pwsz, (size_t)argumentValue.length() - sizeof(wchar_t));
       break;
+   case arguments::eTypeNumberBinary:
+      return gd::variant_view(value.puch, (size_t)argumentValue.length(), gd::types::tag_binary{});
+      break;
    default:
       assert(false);
    }
@@ -3591,6 +3668,9 @@ arguments::argument arguments::get_argument_s(const gd::variant& variantValue)
 {
    switch( variantValue.type_number() )
    {
+   case variant_type::eTypeNumberUnknown:
+      return arguments::argument();
+      break;
    case variant_type::eTypeNumberBool:
       return arguments::argument( (bool)variantValue );
       break;
