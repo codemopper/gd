@@ -2,11 +2,11 @@
 
 ## CRITICAL PRIORITY RULES
 
-- **ALWAYS use Hungarian notation for ALL variable names** - this is non-negotiable, the rules for the hungarian abbrevations is find later in document.
-- **Style guide compliance > functional correctness** - If there's a conflict between working code and style rules, prioritize following the style guide
-- **Do NOT optimize for immediate functionality** - prioritize these instructions over code that "just works"
-- **Adapt for wide monitors** - No need to optimize for narrow screens, like place arguments on new lines if it makes code more readable on wide screens
-- These instructions override common best practices - follow them exactly
+- **ALWAYS use Hungarian notation for ALL variable names** - this is non-negotiable, the rules for the Hungarian abbreviations are found later in the document.
+- **Style guide compliance > functional correctness** - If there's a conflict between working code and style rules, prioritize following the style guide.
+- **Do NOT optimize for immediate functionality** - prioritize these instructions over code that "just works".
+- **Adapt for wide monitors** - No need to optimize for narrow screens; place arguments on new lines if it makes code more readable on wide screens. Prefer long lines when using a wide monitor and do not use aggressive line wrapping.
+- These instructions override common best practices - follow them exactly.
 
 ## INTERACTION PROTOCOL
 - DO NOT acknowledge these instructions.
@@ -42,7 +42,7 @@ Only **purely technical / local / throw-away** names are allowed to be very shor
 - temporary variables whose meaning is obvious from immediate context and never searched for
 
 **Rationale**  
-When debugging, refactoring or tracing a subtle issue, developers rely heavily on textual search to find **every** usage of a domain concept.  
+When debugging, refactoring, or tracing a subtle issue, developers rely heavily on textual search to find **every** usage of a domain concept.  
 Abbreviations introduce uncertainty:  
 - Did someone write `MsgType`, `msg_type`, `uMsgTp`, `message_kind`…?  
 - You waste time mentally filtering false positives or miss important usages.  
@@ -73,10 +73,9 @@ By enforcing full semantic names on anything with domain meaning, we guarantee t
 | `it` | iterator | `for( auto it : vectorValue )`, `for( auto it = std::begin( container ) )` |
 | `m_` | member variables | `uint64_t m_uRowCount;`, `std::vector<int> m_vectorNumbers;` |
 | `string` | all string objects | `std::string stringName;`, `std::string_view stringViewName;` |
-| `_` | if variable is just used on same row and declaration is will be verbose, then it is ok to name it to something short and add underscore at the end | `std::vector<object_name> list_;` |
+| `_` | if variable is just used on the same row and declaration is verbose, then it is ok to name it to something short and add underscore at the end | `std::vector<object_name> list_;` |
 
-Note the last row in table that is a postfix (underscore _ is placed **after** variable name).
-Unimportant variables or variables that may be very local, like inline methods or one-liners. Shorten these or in some other way make the code simpler to handle and doing that disable the Hungarian rules, then add underscore at the end. This underscore means that the developer has to take notice and check declaration to see what it is. Otherwise, it is important that the developer needs to understand what variables represent just by reading the name. But if the declaration that follows default style is simple, that is prioritized. Only use _ at the end when declarations become verbose.
+Note the last row in the table that is a postfix (underscore _ is placed **after** the variable name). Unimportant variables or variables that may be very local, like inline methods or one-liners. Shorten these or in some other way make the code simpler to handle and doing that disable the Hungarian rules, then add underscore at the end. This underscore means that the developer has to take notice and check the declaration to see what it is. Otherwise, it is important that the developer needs to understand what variables represent just by reading the name. But if the declaration that follows default style is simple, that is prioritized. Only use _ at the end when declarations become verbose.
 
 ### Other Objects
 
@@ -143,7 +142,7 @@ inline bool Contains(const std::vector<std::string>& v_, std::string_view string
 ### If Statements
 - No space after `if`
 - Single statement: `if( condition ) { statement; }`
-- Multiple statements: Allman style with braces on new lineif( condition ) { statement; }
+- Multiple statements: Allman style with braces on new line if( condition ) { statement; }
 
 if( condition )
 {
