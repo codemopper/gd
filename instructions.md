@@ -5,6 +5,7 @@
 - **ALWAYS use Hungarian notation for ALL variable names** - this is non-negotiable, the rules for the hungarian abbrevations is find later in document.
 - **Style guide compliance > functional correctness** - If there's a conflict between working code and style rules, prioritize following the style guide
 - **Do NOT optimize for immediate functionality** - prioritize these instructions over code that "just works"
+- **Adapt for wide monitors** - No need to optimize for narrow screens, like place arguments on new lines if it makes code more readable on wide screens
 - These instructions override common best practices - follow them exactly
 
 ## INTERACTION PROTOCOL
