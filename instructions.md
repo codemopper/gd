@@ -126,7 +126,9 @@ if( iRow < 0 || iRow >= (int)vector_.size() )                                  /
 Or this style for simple methods and methods in header files
 `/// method comment sample description ---------------------------------------- MethodName`
 
+
 Sample:  
+
 /// Check if value is found in vector of strings ------------------------------ Contains
 inline bool Contains(const std::vector<std::string>& v_, std::string_view stringValue)
 {
