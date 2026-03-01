@@ -1,4 +1,4 @@
-# Copilot Instructions for DOD Project
+# AI Instructions
 
 ## CRITICAL PRIORITY RULES
 
