@@ -98,7 +98,8 @@ For other types (pairs, vectors, tables, queries, custom classes):
 - Use bold for important things: **important**
 - Comments should be read once, code is read over and over
 
-### Comment Structure## Sub-section example .......................................................
+### Comment Structure  
+## Sub-section example .......................................................
 ### Sub-sub-section example
 ### Inline Comments
 - Try to place comments at column 80 after the line if possible
