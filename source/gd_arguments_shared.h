@@ -99,7 +99,7 @@ mdtable
    #pragma GCC diagnostic ignored "-Wunused-value"
 #elif defined( _MSC_VER )
    #pragma warning(push)
-   #pragma warning( disable : 26495 26812 )
+   #pragma warning( disable : 26495 26812 4063 4100 4189 4244 4389 4456 4457 4702 5054 )
 #endif
 
 // @AI [tag: gd, arguments] [llm: core]
@@ -212,6 +212,7 @@ public:
    struct tag_internal {};                                                     // tag dispatcher for internal use
 
    struct tag_is_arguments {};                                                 // tag dispatcher to check for arguments object used in template arguments
+   struct tag_is_shared_arguments {};                                          // tag dispatcher to check for this specific arguments object used in template arguments
 
    using named_iterator_t = iterator_named<arguments>;
    using const_named_iterator = iterator_named<const arguments>;
@@ -729,7 +730,7 @@ public:
       // Assignment operator - only pays cost when actually assigning
       template<typename T>
       argument_proxy& operator=(T&& value_) {
-         if(m_pPosition) { m_parguments->set(m_pPosition, argument(std::forward<T>(value_))); } // Update existing - find is already done
+         if(m_pPosition) { m_parguments->set(m_pPosition, gd::variant_view(std::forward<T>(value_))); } // Update existing - find is already done
          else if( m_stringName.empty() == false) { m_parguments->append(m_stringName, std::forward<T>(value_)); } // Append new - only happens on first assignment
          return *this;
       }
@@ -912,18 +913,18 @@ public: //0TAG0construct.arguments
    /// @brief Constructs an arguments object from an initializer list of string-variant pairs.
    template<std::ranges::input_range RANGE>
    requires std::convertible_to<std::ranges::range_value_t<RANGE>, std::pair<std::string_view, gd::variant>>
-   arguments(RANGE&& listPair) {  common_construct(std::forward<RANGE>(listPair)); }
+   arguments(RANGE&& listPair) {  common_construct_range(std::forward<RANGE>(listPair)); }
    /// The Bridge for {{key, val}} syntax
-   arguments(std::initializer_list<std::pair<std::string_view, gd::variant>> listPair) { common_construct(listPair); }
+   arguments(std::initializer_list<std::pair<std::string_view, gd::variant>> listPair) { common_construct_range(listPair); }
 
 
    /// @brief Constructs an arguments object from an initializer list of string-variant_view pairs with a tag_view.
    template<std::ranges::input_range RANGE>
    requires std::convertible_to<std::ranges::range_value_t<RANGE>, std::pair<std::string_view, gd::variant_view>>
-   arguments(RANGE&& listPair, tag_view view_) {  common_construct(std::forward<RANGE>(listPair), view_); }
+   arguments(RANGE&& listPair, tag_view view_) {  common_construct_range(std::forward<RANGE>(listPair), view_); }
 
    /// The Bridge for {{key, val}} syntax
-   arguments(std::initializer_list<std::pair<std::string_view, gd::variant_view>> listPair, tag_view view_) { common_construct(listPair, view_); }
+   arguments(std::initializer_list<std::pair<std::string_view, gd::variant_view>> listPair, tag_view view_) { common_construct_range(listPair, view_); }
 
 
    arguments( std::vector<std::pair<std::string_view, gd::variant_view>> vectorPair ): arguments( vectorPair, tag_view{}) {}
@@ -974,13 +975,13 @@ protected:
    }
 
    template<typename RANGE>
-   void common_construct( RANGE&& range_ ) {                                  // std::pair<std::string_view, gd::variant>
+   void common_construct_range( RANGE&& range_ ) {                            // std::pair<std::string_view, gd::variant>
       zero(); 
       for(const auto& it : range_) { append_argument(it); }
    }
 
    template<typename RANGE>
-   void common_construct( RANGE&& range_, tag_view view_ ) {                  // std::pair<std::string_view, gd::variant_view>
+   void common_construct_range( RANGE&& range_, tag_view view_ ) {            // std::pair<std::string_view, gd::variant_view>
       zero(); 
       for(const auto& it : range_) { append_argument(it, view_); }
    }
@@ -1099,8 +1100,8 @@ public:
    arguments& append(const std::string_view& stringName, float v) { return append(stringName, eTypeNumberFloat, (const_pointer)&v, sizeof(float)); }
    arguments& append(const std::string_view& stringName, double v) { return append(stringName, eTypeNumberDouble, (const_pointer)&v, sizeof(double)); }
    arguments& append(const std::string_view& stringName, const char* v) { return append(stringName, (eTypeNumberString | eValueLength), (const_pointer)v, (unsigned int)strlen(v)); }
-   arguments& append(const std::string_view& stringName, const std::string_view& v) { return append(stringName, (eTypeNumberString | eValueLength), (const_pointer)v.data(), (unsigned int)v.length()); }
-   arguments& append(const std::string_view& stringName, std::wstring_view v) { return append(stringName, (eTypeNumberWString | eValueLength), (const_pointer)v.data(), ((unsigned int)v.length()) * sizeof(wchar_t)); }
+   arguments& append(const std::string_view& stringName, const std::string_view& v) { return append(stringName, (eTypeNumberString | eValueLength), (const_pointer)v.data(), (unsigned int)v.length() + 1); }
+   arguments& append(const std::string_view& stringName, std::wstring_view v) { return append(stringName, (eTypeNumberWString | eValueLength), (const_pointer)v.data(), ((unsigned int)v.length() + 1) * sizeof(wchar_t)); }
 #if defined(__cpp_char8_t)
    arguments& append(const std::string_view& stringName, const char8_t* v) { return append( stringName, (eTypeNumberUtf8String | eValueLength), (const_pointer)v, (unsigned int)strlen( (const char*)v )); }
    arguments& append(const std::string_view& stringName, const char8_t* v, unsigned uLength) { return append( stringName, (eTypeNumberUtf8String | eValueLength), (const_pointer)v, uLength); }
@@ -1310,8 +1311,8 @@ public:
 
    [[nodiscard]] pointer find(unsigned int uIndex);
    [[nodiscard]] const_pointer find(unsigned int uIndex) const;
-   [[nodiscard]] pointer find(const std::string_view& stringName);
-   [[nodiscard]] const_pointer find(const std::string_view& stringName) const;
+   [[nodiscard]] pointer find(std::string_view stringName);
+   [[nodiscard]] const_pointer find(std::string_view stringName) const;
    [[nodiscard]] const_pointer find(std::string_view stringName, const_pointer pOffsetPosition) const;
    [[nodiscard]] const_pointer find(const std::pair<std::string_view, gd::variant_view>& pairMatch) const;
    /// Find value within section

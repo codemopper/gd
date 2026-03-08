@@ -31,6 +31,8 @@
 #pragma once
 
 #include <cassert>
+#include <cstring>
+#include <limits>
 #include <type_traits>
 #include <stdint.h>
 #include <string>
@@ -62,7 +64,7 @@ _GD_TYPES_BEGIN
    #pragma GCC diagnostic ignored "-Wdeprecated-enum-enum-conversion"
 #elif defined( _MSC_VER )
    #pragma warning(push)
-   #pragma warning( disable : 4267 26495 26812 )
+   #pragma warning( disable : 26495 26812 4063 4100 4189 4244 4389 4456 4457 4702 5054 )
 #endif
 
 #define GD_TYPES_VERSION 0x00000001 ///< version number for gd types
@@ -148,6 +150,7 @@ struct tag_status {};         ///< status is used in some form, like active/inac
 struct tag_success {};        ///< success is used in some form
 struct tag_table {};          ///< table is used in some form
 struct tag_column {};         ///< column is used in some form, like table columns
+struct tag_field {};          ///< field is used in some form, like table fields
 struct tag_card {};           ///< card is used in some form, like a data card or card form
 struct tag_dimension {};      ///< dimension is used in some form, like width/height
 struct tag_duration {};       ///< duration is used in some form, like time duration
@@ -213,6 +216,7 @@ struct tag_hex {};            ///< data is in hex format
 struct tag_json {};           ///< data is in json format
 struct tag_path {};           ///< data is in path format
 struct tag_text {};           ///< data is in text format
+struct tag_querystring {};    ///< data is in query string format, like `?key=value&key2=value2`  
 struct tag_uri {};            ///< data is in uri format (url encoded)
 struct tag_url {};            ///< data is in url format
 struct tag_utf8 {};           ///< data is in utf8 format
@@ -331,7 +335,7 @@ uint8_t ctype_g(const std::string_view& stringCType, tag_main_type );
 uint16_t ctype_g(const std::string_view& stringCType);
 /// detect if text is integer, decimal or text
 unsigned detect_ctypegroup_g( const uint8_t* puText, unsigned uLength );
-inline unsigned detect_ctypegroup_g( const std::string_view& stringText ) { return detect_ctypegroup_g( (const uint8_t*)stringText.data(), stringText.length() ); }
+inline unsigned detect_ctypegroup_g( const std::string_view& stringText ) { return detect_ctypegroup_g( (const uint8_t*)stringText.data(), (unsigned)stringText.length() ); }
 
 
 /*-----------------------------------------*/ /**
@@ -365,6 +369,8 @@ enum enumTypeNumber
    eTypeNumberWString      = 16,
    eTypeNumberUtf32String  = 17,
    eTypeNumberBinary       = 18,
+
+   // ## formatted types and less used types
    eTypeNumberJson         = 19,
    eTypeNumberXml          = 20,
    eTypeNumberCsv          = 21,
@@ -551,6 +557,22 @@ constexpr bool is_decimal_g(unsigned uType) { return detail::is_decimal(uType); 
 constexpr bool is_date_g(unsigned uType) { return detail::is_date(uType); }
 constexpr bool is_string_g(unsigned uType) { return detail::is_string(uType); }
 constexpr bool is_binary_g(unsigned uType) { return detail::is_binary(uType); }
+
+// ## helper methods used to cast values to specific types, with assert to check if value is in range for type
+
+template <typename TYPE> 
+constexpr uint8_t cast_u8_g( TYPE uValue ) { assert( uValue <= std::numeric_limits<uint8_t>::max() ); return static_cast<uint8_t>(uValue); }
+template <typename TYPE> 
+constexpr uint16_t cast_u16_g( TYPE uValue ) { assert( uValue <= std::numeric_limits<uint16_t>::max() ); return static_cast<uint16_t>(uValue); }
+template <typename TYPE> 
+constexpr uint32_t cast_u32_g( TYPE uValue ) { assert( uValue <= std::numeric_limits<uint32_t>::max() ); return static_cast<uint32_t>(uValue); }
+template <typename TYPE> 
+constexpr int32_t cast_i32_g( TYPE uValue )
+{
+   if constexpr( std::is_signed_v<TYPE> ) { assert( uValue >= std::numeric_limits<int32_t>::min() ); }
+   assert( uValue <= std::numeric_limits<int32_t>::max() );
+   return static_cast<int32_t>(uValue);
+}
 
 
 /** ---------------------------------------------------------------------------
@@ -1238,14 +1260,13 @@ struct is_variant : std::false_type {};
 template <typename... Types>
 struct is_variant<std::variant<Types...>> : std::true_type {};
 
-// ### std::deque
 
-// Default case: any type T is not considered a deque, hence false
-// template <typename T>
-// struct is_deque : std::false_type {};
-// Specialization for std::deque: this type is indeed a deque, so true
-// template <typename T, typename Alloc>
-// struct is_deque<std::deque<T, Alloc>> : std::true_type {};
+// ### concepts for gd types
+
+/// Concept to check if type is a arguments type, which is used to mark types that can be used as arguments in functions
+/// Sample: `field* add( is_arguments auto const& arguments_ );`
+template<typename TYPE>
+concept is_arguments = requires { typename TYPE::tag_is_arguments; };
 
 /*-----------------------------------------*/ /**
    * \brief wrapper used to uuid value

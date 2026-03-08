@@ -139,6 +139,8 @@ public:
    bool is_reference() const noexcept { return (m_uState & eColumnStateReference); }
    /// is column aligned (default is top/right)
    bool is_aligned() const noexcept { return (m_uState & eColumnStateAlignMask); }
+   /// is column a primitive type that can be directly stored in column buffer
+   bool is_primitive() const noexcept { return gd::types::is_primitive_g( m_uCType ); }
 
    // ## Transfer methods
 
@@ -271,7 +273,7 @@ public:
    column* get( size_t uIndex ) { assert( uIndex < size() ); return &m_vectorColumn[uIndex]; }
    const column* get( size_t uIndex ) const { assert( uIndex < size() ); return &m_vectorColumn[uIndex]; }
 #endif
-   int find_index( const std::string_view& stringName ) const noexcept;
+   int find_index( std::string_view stringName ) const noexcept;
    int find_index( const gd::variant_view& column_ ) const noexcept;
 
    unsigned state( unsigned uIndex ) const { return get( uIndex )->state(); }
@@ -285,6 +287,8 @@ public:
    std::string_view type_name( unsigned uIndex ) const { return get( uIndex )->type_name(); }
    std::string_view name( unsigned uIndex ) const { return get( uIndex )->name(); }
    std::string_view alias( unsigned uIndex ) const { return get( uIndex )->alias(); }
+   
+   bool is_primitive( unsigned uIndex ) const { return get( uIndex )->is_primitive(); }
 
    iterator begin() { return m_vectorColumn.begin(); }
    iterator end() { return m_vectorColumn.end(); }

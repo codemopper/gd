@@ -1,6 +1,8 @@
 // @FILE [tag: sql, query] [description: Core logic for SQL queries] [type: header] [name: gd_sql_query.h]
 
+
 /*
+* 
 ## class query
 | Area                | Methods (Examples)                                                                 | Description                                                                                   |
 |---------------------|------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------|
@@ -101,9 +103,6 @@ _GD_SQL_QUERY_BEGIN
 _GD_SQL_QUERY_BEGIN
 #endif
 
-using namespace gd::argument;
-
-
 /**
  * @brief Generate sql queries
  *
@@ -127,6 +126,32 @@ TEST_CASE( "Create sql for the FROM part between two tables", "[sql]" ) {
  */
 class query
 {
+public:
+   enum enumTableFlags : unsigned
+   {
+      eTableFlagNone       = 0,
+
+      // how to join this table to another table, this is used to generate join part in query
+      eTableFlagJoinInner = 1 << 0,   ///< INNER JOIN
+      eTableFlagJoinLeft = 1 << 1,    ///< LEFT JOIN
+      eTableFlagJoinRight = 1 << 2,   ///< RIGHT JOIN
+      eTableFlagJoinFull = 1 << 3,    ///< FULL JOIN
+   };
+
+   enum enumFieldFlags : unsigned
+   {
+      eFieldFlagNone       = 0,
+      eFieldFlagAlias      = 1 << 0,
+      eFieldFlagKey        = 1 << 1,
+      eFieldFlagFk         = 1 << 2,
+      eFieldFlagRaw        = 1 << 3,
+      eFieldFlagFrom       = 1 << 4,
+      eFieldFlagJoin       = 1 << 5,
+      eFieldFlagWhere      = 1 << 6,
+      eFieldFlagSubSelect  = 1 << 7,
+      eFieldFlagGroupBy    = 1 << 8,
+      eFieldFlagOrderBy    = 1 << 9,
+   };
 
 public:
    /*-----------------------------------------*/ /**
@@ -141,40 +166,51 @@ public:
       table(unsigned uTable, const std::string_view& stringName): m_uKey(uTable) { append("name", stringName); }
       table(unsigned uTable, const std::string_view& stringName, const std::string_view& stringAlias): m_uKey(uTable) { append("name", stringName); append_if("alias", stringAlias); }
       table(unsigned uTable, const std::string_view& stringName, const std::string_view& stringAlias, const std::string_view& stringParent): m_uKey(uTable) { append("name", stringName); append_if("alias", stringAlias); append_if("parent", stringParent); }
+      table( unsigned uTable, const gd::argument::arguments& arguments_ ) : m_uKey( uTable ), m_argumentsTable( arguments_ ) {}
       table( const table& o ) { common_construct( o ); }
       table( table&& o ) noexcept { common_construct( o ); }
       table& operator=( const table& o ) { common_construct( o ); return *this; }
       table& operator=( table&& o ) noexcept { common_construct( o ); return *this; }
 
-      void common_construct(const table& o) { m_uKey = o.m_uKey; m_iReferenceCount = o.m_iReferenceCount; m_argumentsTable = o.m_argumentsTable; }
-      void common_construct( table&& o ) noexcept { m_uKey = o.m_uKey; m_iReferenceCount = o.m_iReferenceCount; m_argumentsTable = std::move( o.m_argumentsTable ); }
+      void common_construct(const table& o) { m_uKey = o.m_uKey; m_iReferenceCount = o.m_iReferenceCount; m_uFlags = o.m_uFlags; m_argumentsTable = o.m_argumentsTable; }
+      void common_construct( table&& o ) noexcept { m_uKey = o.m_uKey; m_iReferenceCount = o.m_iReferenceCount; m_uFlags = o.m_uFlags; m_argumentsTable = std::move( o.m_argumentsTable ); }
 
       operator unsigned() const { return m_uKey;  }
 
+      bool has(std::string_view stringName) const { return m_argumentsTable.find(stringName) != nullptr; }
+      unsigned get_key() const { return m_uKey; }
+      bool has_flag( unsigned uFlag ) const { return ( m_uFlags & uFlag ) != 0; }
 
-      std::string name() const { return m_argumentsTable["name"].get_string(); }
-      std::string alias() const { return m_argumentsTable["alias"].get_string(); }
-      void alias(const std::string_view& stringAlias) { m_argumentsTable.set( "alias", stringAlias ); }
-      std::string parent() const { return m_argumentsTable["parent"].get_string(); }
-      std::string schema() const { return m_argumentsTable["schema"].get_string(); }
-      std::string owner() const { return m_argumentsTable["owner"].get_string(); }
-      std::string join() const { return m_argumentsTable["join"].get_string(); }
-      /// get key name
-      std::string key() const { return m_argumentsTable["key"].get_string(); }
-      /// get foreign key name
-      std::string fk() const { return m_argumentsTable["fk"].get_string(); }
 
-      arguments& get_arguments() { return m_argumentsTable; }
-      const arguments& get_arguments() const { return m_argumentsTable; }
+      std::string_view name() const noexcept { return m_argumentsTable["name"].get_string_view(); }
+      void name(std::string_view stringName) { m_argumentsTable.set( "name", stringName ); }
+      std::string_view alias() const noexcept { return m_argumentsTable["alias"].get_string_view(); }
+      void alias(std::string_view stringAlias) { m_argumentsTable.set( "alias", stringAlias ); }
+      std::string_view parent() const noexcept { return m_argumentsTable["parent"].get_string_view(); }
+      void parent(std::string_view stringParent) { m_argumentsTable.set( "parent", stringParent ); }
+      std::string_view schema() const noexcept { return m_argumentsTable["schema"].get_string_view(); }
+      void schema( std::string_view stringSchema ) { m_argumentsTable.set( "schema", stringSchema ); } ///< get schema name for table, this to generate join part in query
+      std::string_view owner() const noexcept { return m_argumentsTable["owner"].get_string_view(); }
+      void owner( std::string_view stringOwner ) { m_argumentsTable.set( "owner", stringOwner ); }
+      std::string_view join() const noexcept { return m_argumentsTable["join"].get_string_view(); }         ///< get join string if join is set outside, this to generate join part in query
+      void join( std::string_view stringJoin ) { m_argumentsTable.set( "join", stringJoin ); }  
+      /// get key field name, this to generate join part in query
+      std::string_view key() const noexcept { return m_argumentsTable["key"].get_string_view(); }           ///< primary key field name for table, this to generate join part in query
+      void key(std::string_view stringKey) { m_argumentsTable.set( "key", stringKey ); }
+      /// get foreign key field name, this to generate join part in query
+      std::string_view fk() const noexcept { return m_argumentsTable["fk"].get_string_view(); }             ///< foreign key field name for table, this to generate join part in query
+      void fk(std::string_view stringFk) { m_argumentsTable.set( "fk", stringFk ); }
+
+      gd::argument::arguments& get_arguments() { return m_argumentsTable; }
+      const gd::argument::arguments& get_arguments() const { return m_argumentsTable; }
 
       template<typename VALUE>
       table& append(std::string_view stringName, const VALUE& v) { m_argumentsTable.append(stringName, v); return *this; }
       template<typename VALUE>
       table& append_if( std::string_view stringName, const VALUE& v ) { gd::variant_view VV( v ); if( VV.is_true() ) { m_argumentsTable.append_argument( stringName, v ); } return *this; }
       table& set(std::string_view stringName, const gd::variant_view& v) { m_argumentsTable.set(stringName, v); return *this; }
-      table& set(const arguments& v) { m_argumentsTable = v; return *this; }
+      table& set(const gd::argument::arguments& v) { m_argumentsTable = v; return *this; }
       //table& set(const std::string_view& stringName, const arguments::argument& v) { m_argumentsTable.set(stringName, v); return *this; }
-      bool has(std::string_view stringName) const { return m_argumentsTable.find(stringName) != nullptr; }
       bool compare(const std::pair<std::string_view, gd::variant_view>& pairMatch) const { return m_argumentsTable.find(pairMatch) != nullptr; }
 
       bool compare(unsigned uKey) const { return m_uKey == uKey; }
@@ -184,8 +220,9 @@ public:
       // attributes
       public:
          unsigned m_uKey = 0;        ///< key to table used by other object in query (field belongs to table)
+         unsigned m_uFlags = 0;      ///< join type for table, this to generate join part in query
          int m_iReferenceCount = 0;  ///< if table is in use by other items
-         arguments m_argumentsTable; ///< all table properties
+         gd::argument::arguments m_argumentsTable; ///< all table properties
    };
 
 
@@ -199,32 +236,42 @@ public:
       field() {}
       explicit field(unsigned uTable) : m_uTableKey(uTable) {}
       explicit field( unsigned uTable, unsigned uUseAndType ) : m_uTableKey( uTable ), m_uUseAndType{ uUseAndType } {}
-      field( unsigned uTable, const arguments& arguments_ ): m_uTableKey(uTable), m_uUseAndType(0), m_argumentsField(arguments_) {}
-      field( unsigned uTable, unsigned uUseAndType, const arguments& arguments_ ): m_uTableKey(uTable), m_uUseAndType(uUseAndType), m_argumentsField(arguments_) {}
-      field(unsigned uTable, std::string_view stringName): m_uTableKey(uTable) { append("name", stringName); }
-      field(unsigned uTable, std::string_view stringName, std::string_view stringAlias): m_uTableKey(uTable) { append("name", stringName); append("alias", stringAlias); }
+      explicit field( unsigned uTable, const gd::argument::arguments& arguments_ ): m_uTableKey(uTable), m_uUseAndType(0), m_argumentsField(arguments_) {}
+      explicit field( unsigned uTable, unsigned uUseAndType, const gd::argument::arguments& arguments_ ): m_uTableKey(uTable), m_uUseAndType(uUseAndType), m_argumentsField(arguments_) {}
+      explicit field( unsigned uTable, unsigned uUseAndType, unsigned uFlags, const gd::argument::arguments& arguments_ ): m_uTableKey(uTable), m_uUseAndType(uUseAndType), m_uFlags( uFlags ), m_argumentsField(arguments_) {}
+      explicit field(unsigned uTable, std::string_view stringName): m_uTableKey(uTable) { append("name", stringName); }
+      explicit field(unsigned uTable, std::string_view stringName, std::string_view stringAlias): m_uTableKey(uTable) { append("name", stringName); append("alias", stringAlias); }
       field( const field& o ) { common_construct( o ); }
       field( field&& o ) noexcept { common_construct( o ); }
       field& operator=( const field& o ) { common_construct( o ); return *this; }
       field& operator=( field&& o ) noexcept { common_construct( o ); return *this; }
 
-      void common_construct(const field& o) { m_uTableKey = o.m_uTableKey; m_uUseAndType = o.m_uUseAndType; m_argumentsField = o.m_argumentsField; }
-      void common_construct( field&& o ) noexcept { m_uTableKey = o.m_uTableKey; m_uUseAndType = o.m_uUseAndType; m_argumentsField = std::move( o.m_argumentsField ); }
+      void common_construct(const field& o) { m_uTableKey = o.m_uTableKey; m_uUseAndType = o.m_uUseAndType; m_uFlags = o.m_uFlags; m_argumentsField = o.m_argumentsField; }
+      void common_construct( field&& o ) noexcept { m_uTableKey = o.m_uTableKey; m_uUseAndType = o.m_uUseAndType; m_uFlags = o.m_uFlags; m_argumentsField = std::move( o.m_argumentsField ); }
 
-      arguments::argument operator[](const std::string_view& stringName) const noexcept { return m_argumentsField[stringName]; }
+      gd::argument::arguments::argument operator[](const std::string_view& stringName) const noexcept { return m_argumentsField[stringName]; }
 
+      unsigned get_parttype() const noexcept { return m_uUseAndType; }
       unsigned get_useandtype() const noexcept { return m_uUseAndType; }
       void set_useandtype( unsigned uSet, unsigned uClear ) { m_uUseAndType |= uSet; m_uUseAndType &= ~uClear;  }
+      void set_useandtype( unsigned uType ) { m_uUseAndType = uType; }
 
       unsigned get_table_key() const { return m_uTableKey; }
-      arguments::argument get_value(const std::string_view& stringName) const noexcept { return m_argumentsField[stringName]; }
+      gd::argument::arguments::argument get_value(const std::string_view& stringName) const noexcept { return m_argumentsField[stringName]; }
 
-      std::string name() const { return m_argumentsField["name"].get_string(); }
-      std::string alias() const { return m_argumentsField["alias"].get_string(); }
-      std::string raw() const { return m_argumentsField["raw"].get_string(); }
+      std::string_view name() const { return m_argumentsField["name"].as_string_view(); }
+      std::string_view alias() const { return m_argumentsField["alias"].as_string_view(); }
+      std::string raw() const { return m_argumentsField["raw"].as_string(); }
+      uint32_t type() const { auto v_ = m_argumentsField["type"]; return v_.is_uint32() ? (uint32_t)v_ : query::type_s( v_.as_variant_view() ); }
+      gd::variant_view value() const { return m_argumentsField["value"].as_variant_view(); }
 
-      arguments& get_arguments() { return m_argumentsField; }
-      const arguments& get_arguments() const { return m_argumentsField; }
+      std::string_view from() const { return m_argumentsField["from"].as_string_view(); }
+      std::string_view join() const { return m_argumentsField["join"].as_string_view(); }
+      std::string_view where() const { return m_argumentsField["where"].as_string_view(); }
+      gd::variant_view order() const { return m_argumentsField["order"].as_variant_view(); }
+
+      gd::argument::arguments& get_arguments() { return m_argumentsField; }
+      const gd::argument::arguments& get_arguments() const { return m_argumentsField; }
 
       template<typename VALUE>
       field& append(std::string_view stringName, const VALUE& v) { m_argumentsField.append(stringName, v); return *this; }
@@ -232,20 +279,30 @@ public:
       template<typename VALUE>
       field& set(std::string_view stringName, const VALUE& v) { m_argumentsField.set(stringName, v); return *this; }
       bool has(std::string_view stringName) const { return (m_argumentsField.find(stringName) != nullptr); }
+      bool has_flag( unsigned uFlag ) const { return ( m_uFlags & uFlag ) != 0; }
       bool compare( const std::pair<std::string_view, gd::variant_view>& pairMatch) const { return m_argumentsField.find(pairMatch) != nullptr; }
       bool compare(const table* pTable) const { return m_uTableKey == *pTable; }
 
-      bool is_groupby() const { return m_uUseAndType & eSqlPartGroupBy; }
-      bool is_orderby() const { return m_uUseAndType & eSqlPartOrderBy; }
+      /// When default field will be added to select, insert and update queries
+      bool is_default() const { return m_uUseAndType == 0; }
+
       bool is_select() const { return m_uUseAndType == 0 || m_uUseAndType & eSqlPartSelect; }
+      bool is_insert() const { return m_uUseAndType == 0 || m_uUseAndType & (eSqlPartSelect|eSqlPartInsert); }
+      bool is_update() const { return m_uUseAndType == 0 || m_uUseAndType & (eSqlPartSelect|eSqlPartUpdate); }
+
+      bool is_groupby() const { return m_uUseAndType & eSqlPartGroupBy; }
+      bool is_orderby() const { return m_uUseAndType & eSqlPartOrderBy;  }
+      bool is_returning() const { return m_uUseAndType & eSqlPartReturning; }
 
 
       // attributes
       public:
+         query* m_pQuery = nullptr;  ///< pointer to query that owns condition
          unsigned m_uTableKey = 0;   ///< table that owns field
          unsigned m_uUseAndType = 0; ///< Field has specific rules (format or where to place it) flags and use type is used
+         unsigned m_uFlags = 0;
                                      ///< default (m_uUseAndType = 0) and field is only used in select part
-         arguments m_argumentsField; ///< all field properties
+         gd::argument::arguments m_argumentsField; ///< all field properties
    };
 
    /*-----------------------------------------*/ /**
@@ -257,29 +314,34 @@ public:
    {
       condition() {}
       explicit condition(unsigned uTable) : m_uTableKey(uTable) {}
-      condition( unsigned uTable, const arguments& arguments_ ): m_uTableKey(uTable), m_argumentsCondition(arguments_) {}
+      condition( unsigned uTable, const gd::argument::arguments& arguments_ ): m_uTableKey(uTable), m_argumentsCondition(arguments_) {}
       condition( const condition& o ) { common_construct( o ); }
       condition( condition&& o ) noexcept { common_construct( o ); }
       condition& operator=( const condition& o ) { common_construct( o ); return *this; }
       condition& operator=( condition&& o ) noexcept { common_construct( o ); return *this; }
 
-      operator arguments() const { return m_argumentsCondition; }
+      operator gd::argument::arguments() const { return m_argumentsCondition; }
+      void common_construct(const condition& o) { m_pQuery = o.m_pQuery; m_uTableKey = o.m_uTableKey; m_argumentsCondition = o.m_argumentsCondition; }
+      void common_construct(condition&& o) noexcept { m_pQuery = o.m_pQuery; m_uTableKey = o.m_uTableKey; m_argumentsCondition = std::move(o.m_argumentsCondition); o.m_pQuery = nullptr; o.m_uTableKey = 0; }
 
-      void common_construct(const condition& o) { m_uTableKey = o.m_uTableKey; m_argumentsCondition = o.m_argumentsCondition; }
-      void common_construct(condition&& o) noexcept { m_uTableKey = o.m_uTableKey; m_argumentsCondition = std::move(o.m_argumentsCondition); }
+      /// return value for conditions, this is placed in arguments named "value"
+      gd::variant_view value() const { return m_argumentsCondition["value"].as_variant_view(); }
+      gd::variant_view value_hi() const { return m_argumentsCondition["value_hi"].as_variant_view(); }
+      std::string_view sql() const { return m_argumentsCondition["sql"].as_string_view(); }
 
-      /// return value for conditions, this is places in arguments named to "value"
-      arguments::argument value() const { return m_argumentsCondition["value"]; }
-
-      std::string name() const { return m_argumentsCondition["name"].get_string(); }
+      std::string_view name() const { return m_argumentsCondition["name"].as_string_view(); }
       std::string value_string() const { return m_argumentsCondition["value"].get_string(); }
-      std::string raw() const { return m_argumentsCondition["raw"].get_string(); }
+      std::string_view raw() const { return m_argumentsCondition["raw"].as_string_view(); }
+      std::string_view join() const { return m_argumentsCondition["join"].as_string_view(); }
+      uint32_t type() const { auto v_ = m_argumentsCondition["type"]; return v_.is_uint32() ? (uint32_t)v_ : query::type_s( v_.as_variant_view() ); }
+      uint32_t operator_() const { auto v_ = m_argumentsCondition["operator"]; return v_.is_uint32() ? (uint32_t)v_ : query::get_where_operator_number_s( v_.as_string_view() ); }
+      std::string_view group() const { return m_argumentsCondition["group"].as_string_view(); }    ///< when condition is added to query with group name when and, or and not is used to group conditions together, conditions for same group allways get and operator between them.
 
       unsigned get_table_key() const { return m_uTableKey; }
       unsigned get_operator() const { return m_argumentsCondition["operator"].get_uint(); }
 
-      arguments& get_arguments() { return m_argumentsCondition; }
-      const arguments& get_arguments() const { return m_argumentsCondition; }
+      gd::argument::arguments& get_arguments() { return m_argumentsCondition; }
+      const gd::argument::arguments& get_arguments() const { return m_argumentsCondition; }
 
 
       template<typename VALUE>
@@ -292,20 +354,22 @@ public:
       /// compare named value with sent condition, if both condition values for name match return true, otherwise false
       bool compare(const std::string_view& stringName, const condition* pconditionCompareTo) const { return m_argumentsCondition.compare( stringName, *pconditionCompareTo ); }
 
-
-
       // attributes
       public:
-         unsigned m_uTableKey = 0;   ///< table that owns condition
-         arguments m_argumentsCondition; ///< all condition properties
+         query* m_pQuery = nullptr; ///< pointer to query that owns condition
+         unsigned m_uTableKey = 0;  ///< table that owns condition
+         gd::argument::arguments m_argumentsCondition; ///< all condition properties
    };
 
 // ## construction -------------------------------------------------------------
 public:
    query() {}
+   query( enumSqlDialect eSqlDialect ): m_eSqlDialect(eSqlDialect) {}
+   query( enumSqlDialect eSqlDialect, unsigned uFormatOptions ): m_eSqlDialect(eSqlDialect), m_uFormatOptions(uFormatOptions) {}
    query( unsigned uFormatOptions ): m_uFormatOptions(uFormatOptions) {}
    query( std::string_view stringTable, tag_table ) { add( stringTable, tag_table{}); }
    query( unsigned uFormatOptions, std::string_view stringTable, tag_table ): m_uFormatOptions(uFormatOptions) { add( stringTable, tag_table{}); }
+   query( enumSqlDialect eSqlDialect, unsigned uFormatOptions, std::string_view stringTable, tag_table ): m_eSqlDialect(eSqlDialect), m_uFormatOptions(uFormatOptions) { add( stringTable, tag_table{}); }
    // copy
    query( const query& o ) { common_construct( o ); }
    query( query&& o ) noexcept { common_construct( std::move( o ) ); }
@@ -329,13 +393,23 @@ public:
 public:
 /** \name GET/SET
 *///@{
+   [[nodiscard]] bool has_partgroupby() const noexcept { return (m_uAddedPartType & eSqlPartGroupBy) == eSqlPartGroupBy; }
+   [[nodiscard]] bool has_partorderby() const noexcept { return ( m_uAddedPartType & eSqlPartOrderBy ) == eSqlPartOrderBy; }
+   [[nodiscard]] bool has_partselect() const noexcept { return ( m_uAddedPartType & eSqlPartSelect ) == eSqlPartSelect; }
+   [[nodiscard]] bool has_partinsert() const noexcept { return ( m_uAddedPartType & eSqlPartInsert ) == eSqlPartInsert; }
+   [[nodiscard]] bool has_partupdate() const noexcept { return ( m_uAddedPartType & eSqlPartUpdate ) == eSqlPartUpdate; }
+   [[nodiscard]] bool has_partdelete() const noexcept { return ( m_uAddedPartType & eSqlPartDelete ) == eSqlPartDelete; }
+   [[nodiscard]] bool has_partfrom() const noexcept { return ( m_uAddedPartType & eSqlPartFrom ) == eSqlPartFrom; }
+   [[nodiscard]] bool has_partwhere() const noexcept { return ( m_uAddedPartType & eSqlPartWhere ) == eSqlPartWhere; }
+   [[nodiscard]] bool has_partreturning() const noexcept { return ( m_uAddedPartType & eSqlPartReturning ) == eSqlPartReturning; }
+
 
 //@}
 
-/** \name TABLE
-*///@{
+/// @API [tag: table] [summary: table management] [description: methods to add and manage tables in query]
+
    /// get pointer to first table in query (this should be the root table)
-   const table* table_get() const { return &m_vectorTable[0]; }
+   const table* table_get() const { assert(m_vectorTable.empty() == false); return &m_vectorTable[0]; }
    const table* table_get(const gd::variant_view& variantTable) const;
    table* table_get( const std::pair<std::string_view, gd::variant_view>& pairField );
    const table* table_get( const table& tableFind ) const noexcept;
@@ -345,29 +419,46 @@ public:
    table* table_add(const std::string_view& stringName, const std::string_view& stringAlias, const std::string_view& stringparent );
    table* table_add(const std::vector< std::pair<std::string_view, gd::variant_view> >& vectorTable );
    table* table_add(const table& tableAdd );
+   table* table_add( const gd::argument::arguments& argumentsTable, tag_arguments );
    bool table_exists( const table& tableExists ) const noexcept { return table_get( tableExists ) != nullptr; }
    std::size_t table_size() const { return m_vectorTable.size(); }
    bool table_empty() const { return m_vectorTable.empty(); }
+   uint32_t table_get_key() const { auto pTable = table_get(); return pTable ? (uint32_t)pTable->get_key() : 0; }
+   int32_t table_get_key( std::string_view stringTable ) const { auto pTable = table_get( stringTable ); return pTable ? (int32_t)pTable->get_key() : -1; }
 
    std::vector<table>::iterator table_begin() { return m_vectorTable.begin(); }
    std::vector<table>::const_iterator table_begin() const { return m_vectorTable.cbegin(); }
    std::vector<table>::iterator table_end() { return m_vectorTable.end(); }
    std::vector<table>::const_iterator table_end() const { return m_vectorTable.cend(); }
-//@}
 
+// ## @API [tag: field] [summary: field management] [description: methods to add and manage fields in query]
 
-/** \name FIELD
-*///@{
-   // ## add fields to query
-   field* field_add(const std::string_view& stringName) { return field_add(gd::variant_view(0u), stringName, std::string_view()); }
-   void field_add(const std::vector<std::string_view>& vectorName, tag_name );
-   field* field_add(const gd::variant_view& variantTable, std::string_view stringName) { return field_add(gd::variant_view(0u), stringName, std::string_view()); }
+   field* field_add(const std::string_view& stringName, tag_index); 
+
+   field* field_add(const std::string_view& stringName) { return field_add( stringName, tag_index{} ); }
+   field* field_add(const gd::variant_view& variantTable, std::string_view stringName) { return field_add(variantTable, stringName, std::string_view()); }
+   field* field_add(std::string_view stringName, std::string_view stringAlias, tag_index); 
    field* field_add(const gd::variant_view& variantTable, std::string_view stringName, std::string_view stringAlias);
-   field* field_add(const std::vector< std::pair<std::string_view, gd::variant_view> >& vectorField) { return field_add( gd::variant_view(0u), vectorField ); }
-   field* field_add(const gd::variant_view& variantTable, const std::vector< std::pair<std::string_view, gd::variant_view> >& vectorField );
    field* field_add( const field& fieldAdd ) { m_vectorField.push_back( fieldAdd ); return &m_vectorField.back(); }
    field* field_add( field&& fieldAdd ) { m_vectorField.push_back( std::move( fieldAdd ) ); return &m_vectorField.back(); }
 
+   field* field_add( const gd::argument::arguments& argumentsField, tag_arguments );
+   field* field_add( unsigned uTableKey, const gd::argument::arguments& argumentsField, tag_arguments );
+   field* field_add( unsigned uTableKey, unsigned uFlags, const gd::argument::arguments& argumentsField, tag_arguments );
+
+   std::pair<field*, std::string> field_add( unsigned uTableKey, std::string_view stirngQueryString, tag_querystring ); ///< add field with table key, this is used when field is added with querystring and table key is needed to link field to table
+   std::pair<field*, std::string> field_add( std::string_view stringTable, std::string_view stirngQueryString, tag_querystring ) { return field_add( table_get_key( stringTable ), stirngQueryString, tag_querystring{} ); } 
+   std::pair<field*, std::string> field_add( std::string_view stirngQueryString, tag_querystring ) { return field_add( table_get()->get_key(), stirngQueryString, tag_querystring{}); }
+
+   /// add field with type, type is used to mark where field is used in query.
+   field* field_add_parttype( unsigned uPartType, const gd::argument::arguments& argumentsField, tag_arguments );
+   field* field_add_parttype( std::string_view stringPart, const gd::argument::arguments& argumentsField, tag_arguments ) { return field_add_parttype( query::part_s( stringPart ), argumentsField, tag_arguments{} ); }
+   field* field_add_parttype( unsigned uPartType, unsigned uTableKey, const gd::argument::arguments& argumentsField, tag_arguments );
+   field* field_add_parttype( std::string_view stringPart, unsigned uTableKey, const gd::argument::arguments& argumentsField, tag_arguments ) { return field_add_parttype( query::part_s( stringPart ), uTableKey, argumentsField, tag_arguments{} ); }
+   field* field_add_parttype( unsigned uPartType, unsigned uTableKey, unsigned uFlags, const gd::argument::arguments& argumentsField, tag_arguments );
+
+
+   void field_add(const std::vector<std::string_view>& vectorName, tag_name );
    void field_add_many(const std::vector< std::vector< std::pair<std::string_view, gd::variant_view> > >& vectorVectorField );
 
    field* field_add_as_orderby(const gd::variant_view& variantviewField ) { return field_add_as_orderby( gd::variant_view(0u), variantviewField ); }
@@ -387,11 +478,9 @@ public:
    std::vector<field>::const_iterator field_begin() const { return m_vectorField.cbegin();  }
    std::vector<field>::iterator field_end() { return m_vectorField.end(); }
    std::vector<field>::const_iterator field_end() const { return m_vectorField.cend(); }
-//@}
 
-/** \name CONDITION
-*///@{
-   // ## add condition to query
+// ## @API [tag: condition] [summary: condition management] [description: methods to add and manage conditions in query]
+
    condition* condition_add(std::string_view stringName, const gd::variant_view& variantValue) { return condition_add( stringName, gd::variant_view(), variantValue ); }
    condition* condition_add(std::string_view stringName, const gd::variant_view& variantOperator, const gd::variant_view& variantValue);
    condition* condition_add(const gd::variant_view& variantTable, std::string_view stringName, const gd::variant_view& variantOperator, const gd::variant_view& variantValue);
@@ -399,6 +488,9 @@ public:
    condition* condition_add(const gd::variant_view& variantTable, const std::vector< std::pair<std::string_view, gd::variant_view> >& vectorCondition );
    condition* condition_add( const condition& conditionAdd ) { m_vectorCondition.push_back( conditionAdd ); return &m_vectorCondition.back(); }
    condition* condition_add( condition&& conditionAdd ) { m_vectorCondition.push_back( std::move( conditionAdd ) ); return &m_vectorCondition.back(); }
+   condition* condition_add( const gd::argument::arguments& argumentsCondition, tag_arguments );
+   condition* condition_add( unsigned uTableKey, const gd::argument::arguments& argumentsCondition, tag_arguments );
+
    condition* condition_add_(const table* ptable, std::string_view stringName, const gd::variant_view& variantOperator, const gd::variant_view& variantValue);
    condition* condition_add_raw(const gd::variant_view& variantTable, const std::string_view& stringCondition);
 
@@ -409,7 +501,6 @@ public:
    std::vector<condition>::iterator condition_end() { return m_vectorCondition.end(); }
    std::vector<condition>::const_iterator condition_end() const { return m_vectorCondition.cend(); }
 
-//@}
 
 /** \name ADD - simplified add operations wrapping other methods
 *///@{
@@ -419,7 +510,6 @@ public:
    query& add( const gd::variant_view& stringTable, const std::string_view& stringName, tag_field );
    query& add( const gd::variant_view& stringTable, const std::string_view& stringName, const std::string_view& stringAlias, tag_field );
    query& add( const gd::variant_view& stringTable, const std::initializer_list< const char* > listField, tag_field );
-   //query& add( const gd::variant_view& stringTable, std::initializer_list< std::pair<const std::string_view, const std::string_view> > listField, tag_field );
    query& add( const gd::variant_view& stringTable, std::initializer_list< std::pair<const char*, const char*> > listField, tag_field );
    query& add( const gd::variant_view& stringTable, const std::vector< std::pair<const std::string_view, const std::string_view> >& vectorField, tag_field );
 
@@ -433,18 +523,26 @@ public:
 
 /** \name OPERATION
 *///@{
+   void sql_set_dialect( enumSqlDialect eSqlDialect ) { m_eSqlDialect = eSqlDialect; }
+
+
    template <typename VALUE>
    void set_attribute( const std::string_view& stringName, const VALUE& value_ ) { m_argumentsAttribute.set( stringName, value_ ); }
+   query& distinct( gd::variant_view v_ ) { m_argumentsAttribute.set( "distinct", v_ ); return *this; } ///< for nesting
    gd::variant_view distinct() const { return m_argumentsAttribute["distinct"].get_variant_view(); }
    gd::variant_view limit() const { return m_argumentsAttribute["limit"].get_variant_view(); }
+   void set_limit( std::size_t uOffset = 0, std::size_t uCount = 0 );
+   query& limit(std::size_t count_, std::size_t offset_ = 0) { set_limit(offset_, count_); return *this; } ///< for nesting
+   gd::variant_view returning() const { return m_argumentsAttribute["returning"].get_variant_view(); }
+   void set_returning( const std::string_view& stringReturning ) { m_argumentsAttribute.set( "returning", stringReturning ); }
 
+   /// Update internal query state
+   void prepare();
 
    /// Generate key values for internal data in query
    unsigned next_key() { return ++m_uNextKey; };
-   // sql_update(), sql_update( iDbType )
-   // sql_insert(), sql_insert( iDbType )
 
-   void sql_set_dialect( enumSqlDialect eSqlDialect ) { m_eSqlDialect = eSqlDialect; }
+   // @API [tag: sql] [summary: sql generation] [description: methods to generate sql for different parts of query or some that that generate complete queries]
 
    std::string sql_get_join_for_table( const table* ptable, const table* ptableParent ) const;
    std::string sql_get_join_for_table( const table* ptable ) const { return sql_get_join_for_table( ptable, nullptr ); }
@@ -453,13 +551,17 @@ public:
 
    [[nodiscard]] std::string sql_get_select() const;
    [[nodiscard]] std::string sql_get_from() const;
+   [[nodiscard]] std::string sql_get_update_from_before() const;
+   [[nodiscard]] std::string sql_get_update_from_after() const;
    [[nodiscard]] std::string sql_get_where() const;
    [[nodiscard]] std::string sql_get_insert() const;
-   [[nodiscard]] std::string sql_get_update() const;
+   [[nodiscard]] std::string sql_get_update( unsigned uTableKey = 0 ) const;
    [[nodiscard]] std::string sql_get_update( const std::vector< gd::variant_view >& vectorValue ) const;
    [[nodiscard]] std::string sql_get_delete() const;
    [[nodiscard]] std::string sql_get_groupby() const;
-   [[nodiscard]] std::string sql_get_orderby() const;
+   [[nodiscard]] std::string sql_get_values( unsigned uTableKey = 0 ) const;
+   [[nodiscard]] std::string sql_get_orderby( std::string_view stringOrderByPrefix ) const;
+   [[nodiscard]] std::string sql_get_distinct() const;
    [[nodiscard]] std::string sql_get_limit() const;
    [[nodiscard]] std::string sql_get_with() const;
    [[nodiscard]] std::string sql_get_returning() const;
@@ -467,6 +569,14 @@ public:
    [[nodiscard]] std::string sql_get( enumSql eSql ) const;
    [[nodiscard]] std::string sql_get( enumSql eSql, const unsigned* puPartOrder ) const;
 
+   [[nodiscard]] std::string get_select() const { return sql_get( eSqlSelect ); }
+   [[nodiscard]] std::string get_insert() const { return sql_get( eSqlInsert ); }
+   [[nodiscard]] std::string get_update() const { return sql_get( eSqlUpdate ); }
+   [[nodiscard]] std::string get_delete() const { return sql_get( eSqlDelete ); }
+
+/// ## @API [tag: modifiers]
+
+   void clear();
 
 //@}
 
@@ -480,17 +590,22 @@ protected:
 public:
    enumSqlDialect m_eSqlDialect;    ///< sql dialect (brand) used to generate sql
    unsigned m_uNextKey = 0;         ///< used to generate keys
+   unsigned m_uAddedPartType = 0;   ///< used to track added part types
    unsigned m_uFormatOptions;       ///< How to format query, has flags from `enumFormat`
    std::vector<table> m_vectorTable;///< list of tables used to generate query
    std::vector<field> m_vectorField;///< list of fields used to generate query
    std::vector<condition> m_vectorCondition;///< list of conditions used to generate query
-   arguments m_argumentsAttribute;  ///< Attributes are values like `limit`, `distinct`
+   gd::argument::arguments m_argumentsAttribute;  ///< Attributes are values like `limit`, `distinct`
 
 
    static unsigned m_puPartOrder_s[];
 
 // ## free functions ------------------------------------------------------------------
 public:
+   // ## type handling
+   static uint32_t type_s( gd::variant_view v );
+   static void print_type_value_s( uint32_t uType, gd::variant_view VVValue, enumSqlDialect eDialect, std::string& stringTo );
+
    // ## SQL key words and type numbers
    static enumJoin get_join_type_s(const std::string_view& stringJoin);
    static std::string_view sql_get_join_text_s(enumJoin eJoinType);
@@ -526,7 +641,7 @@ public:
    static void values_get_s( const std::vector< gd::variant_view >& vectorValue, std::string& stringValues );
    static std::pair<bool, std::string> values_get_s( const std::vector< std::pair<std::string, gd::variant> >& vectorValue );
 
-   /// Generate `VALUES` compatible section that formats values to work in sql queries
+   /// Generate `VALUES` compatible section that formats values to work in sql queries             @NOTE [tag: type] [summary: type handling] [description: methods to handle types in values, this is used to format values to work in sql queries]
    static std::pair<bool, std::string> values_get_s( std::vector< std::pair<uint32_t, gd::variant_view> >& vectorValue, unsigned uDialect );
 
 
@@ -535,6 +650,16 @@ public:
    static void returning_get_s( const gd::borrow::vector< std::pair< std::string_view, std::string_view > >& vectorValue, std::string& stringReturning, unsigned uDialect );
    static void returning_get_s( std::string_view stringColumn, std::string& stringReturning, unsigned uDialect, char iSplitColumn = ';', char iSplitAlias = ',');
 
+   static constexpr unsigned part_s(std::string_view stringPart) {
+      if (stringPart == "select") return eSqlPartSelect;
+      if (stringPart == "insert") return eSqlPartInsert;
+      if (stringPart == "update") return eSqlPartUpdate;
+      if (stringPart == "groupby") return eSqlPartGroupBy;
+      if (stringPart == "orderby") return eSqlPartOrderBy;
+      if (stringPart == "returning") return eSqlPartReturning;
+                                                                                                   assert( false && "Invalid SQL part" );
+      return 0;
+   }
 };
 
 /// Add table
@@ -556,6 +681,11 @@ inline query::table* query::table_add( const std::string_view& stringName, const
    return &m_vectorTable.back();
 }
 
+/// Add table with arguments, arguments should have at least "name" argument, otherwise assert is triggered
+inline query::table* query::table_add( const gd::argument::arguments& argumentsTable, tag_arguments ) {
+   m_vectorTable.push_back( table( next_key(), argumentsTable ) );
+   return &m_vectorTable.back();
+}
 
 /// Return table pointer for table key if found, nullptr if not found
 inline const query::table* query::table_get_for_key(unsigned uTableKey) const {
@@ -565,15 +695,61 @@ inline const query::table* query::table_get_for_key(unsigned uTableKey) const {
    return nullptr;
 }
 
+inline query::field* query::field_add(const std::string_view& stringName, tag_index) {                    assert( stringName.empty() == false ); assert( m_vectorTable.empty() == false );
+   const auto* ptable = &m_vectorTable[0];
+   m_vectorField.push_back( field( ptable->get_key(), stringName ) );
+   return &m_vectorField.back(); 
+}
+
+/// Add field with arguments, arguments should have at least "name" argument, otherwise assert is triggered
+inline query::field* query::field_add( const gd::argument::arguments& argumentsField, tag_arguments ) {          assert( argumentsField.exists("name") == true ); assert( m_vectorTable.empty() == false );
+   const auto* ptable = table_get();                                                               assert( ptable != nullptr );
+   m_vectorField.push_back( field( *ptable, argumentsField ) ); 
+   return &m_vectorField.back(); 
+}
+
+/// Add table field with arguments, arguments should have at least "name" argument, otherwise assert is triggered
+inline query::field* query::field_add(unsigned uTableKey, const gd::argument::arguments& argumentsField, tag_arguments ) {          assert( argumentsField.exists("name") == true ); assert( table_get( uTableKey ) != nullptr );
+   m_vectorField.push_back( field( uTableKey, argumentsField ) ); 
+   return &m_vectorField.back(); 
+}
+
+/// Add table field with arguments, arguments should have at least "name" argument, otherwise assert is triggered
+inline query::field* query::field_add(unsigned uTableKey, unsigned uFlags, const gd::argument::arguments& argumentsField, tag_arguments ) {          assert( argumentsField.exists("name") == true ); assert( table_get( uTableKey ) != nullptr );
+   m_vectorField.push_back( field( uTableKey, 0u, uFlags, argumentsField ) ); 
+   return &m_vectorField.back(); 
+}
+
+
+/// add field with type, type is used to mark where field is used in query. For example if field is used in select part of query then type is eSqlPartSelect, if field is used in group by part of query then type is eSqlPartGroupBy and so on. If field is used in multiple parts of query then type is combination of types, for example if field is used in select and group by part of query then type is eSqlPartSelect | eSqlPartGroupBy.
+inline query::field* query::field_add_parttype( unsigned uPartType, const gd::argument::arguments& argumentsField, tag_arguments ) {          assert( argumentsField.exists("name") == true ); assert( m_vectorTable.empty() == false );
+   const auto* ptable = table_get();                                                               assert( ptable != nullptr );
+   m_vectorField.push_back( field( *ptable, uPartType, argumentsField ) ); 
+   return &m_vectorField.back(); 
+}
+
+/// Add table field with arguments, arguments should have at least "name" argument, otherwise assert is triggered
+inline query::field* query::field_add_parttype(unsigned uPartType,unsigned uTableKey, const gd::argument::arguments& argumentsField, tag_arguments ) {          assert( argumentsField.exists("name") == true ); assert( table_get( uTableKey ) != nullptr );
+   m_vectorField.push_back( field( uTableKey, uPartType, argumentsField ) ); 
+   return &m_vectorField.back(); 
+}
+
+/// Add table field with arguments, arguments should have at least "name" argument, otherwise assert is triggered
+inline query::field* query::field_add_parttype(unsigned uPartType,unsigned uTableKey, unsigned uFlags, const gd::argument::arguments& argumentsField, tag_arguments ) {          assert( argumentsField.exists("name") == true ); assert( table_get( uTableKey ) != nullptr );
+   m_vectorField.push_back( field( uTableKey, uPartType, uFlags, argumentsField ) ); 
+   return &m_vectorField.back(); 
+}
+
+
+
+
+
+
 /// add field names only using the column name in database
 inline void query::field_add( const std::vector<std::string_view>& vectorName, tag_name ) {
    for( auto it : vectorName ) field_add( it );
 }
 
-/// Add field with name and alias
-inline void query::field_add_many(const std::vector< std::vector< std::pair<std::string_view, gd::variant_view> > >& vectorVectorField) {
-   for( auto& it : vectorVectorField ) field_add(it);
-}
 
 /**----------------------------------------------------------------------------
  * @brief Check if operator number is within limitis
@@ -608,21 +784,6 @@ inline query& query::add( const gd::variant_view& variantTable, const std::strin
    field_add( variantTable, stringName, stringAlias ); return *this;
 }
 
-inline query& query::add( const gd::variant_view& variantTable, const std::initializer_list< const char* > listField, tag_field ) {
-   for( const auto& it : listField ) {                                                             assert( it != nullptr );
-      field_add( variantTable, it );
-   }
-   return *this;
-}
-
-/*
-inline query& query::add( const gd::variant_view& variantTable, std::initializer_list< std::pair<const std::string_view, const std::string_view> > listField, tag_field ) {
-   for( const auto& it : listField ) {                                                             assert( it.first.empty() == false );
-      field_add( variantTable, it.first, it.second );
-   }
-   return *this;
-}
-*/
 
 inline query& query::add( const gd::variant_view& variantTable, std::initializer_list< std::pair<const char*, const char*> > listField, tag_field ) {
    for( const auto& it : listField ) {
@@ -657,10 +818,8 @@ bool query::flag_has_s(unsigned uTest, FLAG uFlag) {
 }
 
 /// add surrounded value to string, like XXXX => "XXXX"
-inline void query::format_add_and_surround_s(std::string& stringText, const std::string_view& stringAdd, char chCharacter) {
-   stringText += chCharacter;
-   stringText += stringAdd;
-   stringText += chCharacter;
+inline void query::format_add_and_surround_s(std::string& stringText, const std::string_view& stringAdd, char iCharacter) {
+   stringText.append( 1, iCharacter ).append( stringAdd ).append( 1, iCharacter );
 }
 
 
