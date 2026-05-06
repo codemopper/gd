@@ -382,6 +382,9 @@ public:
       gd::variant_view cell_get_variant_view( unsigned uIndex ) const { return m_ptablecolumnbuffer->cell_get_variant_view( m_uRow, uIndex ); }
       gd::variant_view cell_get_variant_view( const std::string_view& stringName ) const { return m_ptablecolumnbuffer->cell_get_variant_view( m_uRow, stringName ); }
 
+      bool cell_is_null( unsigned uColumn ) const noexcept { return m_ptablecolumnbuffer->cell_is_null( m_uRow, uColumn ); }
+      bool cell_is_null( std::string_view stringName ) const noexcept { return m_ptablecolumnbuffer->cell_is_null( m_uRow, stringName ); }
+
       void cell_set( unsigned uColumn, const gd::variant_view& variantviewValue ) { m_ptablecolumnbuffer->cell_set( m_uRow, uColumn, variantviewValue ); }
       void cell_set( const std::string_view& stringName, const gd::variant_view& variantviewValue ) { m_ptablecolumnbuffer->cell_set( m_uRow, stringName, variantviewValue ); }
       void cell_set( unsigned uColumn, const gd::variant_view& variantviewValue, tag_convert ) { m_ptablecolumnbuffer->cell_set( m_uRow, uColumn, variantviewValue, tag_convert{} ); }
@@ -417,6 +420,9 @@ public:
 
       gd::variant_view cell_get_variant_view( unsigned uIndex ) const { return m_ptablecolumnbuffer->cell_get_variant_view( m_uRow, uIndex ); }
       gd::variant_view cell_get_variant_view( const std::string_view& stringName ) const { return m_ptablecolumnbuffer->cell_get_variant_view( m_uRow, stringName ); }
+
+      bool cell_is_null( unsigned uColumn ) const noexcept { return m_ptablecolumnbuffer->cell_is_null( m_uRow, uColumn ); }
+      bool cell_is_null( std::string_view stringName ) const noexcept { return m_ptablecolumnbuffer->cell_is_null( m_uRow, stringName ); }
 
       const_iterator_row& operator++() { m_uRow++; return *this; }
       const_iterator_row operator++(int) { const_iterator_row it_ = *this; ++(*this); return it_; }
@@ -926,6 +932,7 @@ public:
    TYPE cell_get( uint64_t uRow, unsigned uColumn ) const noexcept;
 
    bool cell_is_null( uint64_t uRow, unsigned uColumn ) const noexcept;
+   bool cell_is_null( uint64_t uRow, std::string_view stringName ) const noexcept;
    const reference* cell_get_reference( uint64_t uRow, unsigned uColumn ) const noexcept;
 
    gd::variant_view cell_get_variant_view( uint64_t uRow, unsigned uColumn ) const noexcept;
@@ -1615,6 +1622,12 @@ inline bool table_column_buffer::cell_is_null( uint64_t uRow, unsigned uColumn )
    return (uNullRow & (1ULL << uColumn)) != 0;
 }
 
+/// @brief Check if cell is null
+inline bool table_column_buffer::cell_is_null( uint64_t uRow, std::string_view stringName ) const noexcept { assert( m_uFlags & (eTableFlagNull32|eTableFlagNull64) );
+   unsigned uColumnIndex = column_get_index( stringName );
+   return cell_is_null( uRow, uColumnIndex );
+}
+
 /** ---------------------------------------------------------------------------
  * @brief Set value in column to null (marks null flag for column)
  * @param uRow row where cell is
@@ -1671,7 +1684,7 @@ inline void table_column_buffer::cell_set_not_null( uint64_t uRow, unsigned uCol
 
 }
 
-/** ---------------------------------------------------------------------------
+/** ------------------------------------------------------------------------- append
  * @brief Append to table from another table and select from that table what columns that are added
  * @param tableFrom table data is appended from
  * @param vectorColumnIndex list of column index values used to append from
@@ -1682,7 +1695,7 @@ inline void table_column_buffer::append( const table_column_buffer& tableFrom, c
    append( tableFrom, vectorColumnIndexFrom.data(), vectorColumnIndexTo.data(), (unsigned)vectorColumnIndexFrom.size() );
 }
 
-/** ---------------------------------------------------------------------------
+/** ------------------------------------------------------------------------- append
  * @brief Append to table from another table and select from that table what columns that are added
  * @param tableFrom table data is appended from
  * @param vectorColumnIndex list of column index values used to append from
@@ -1694,7 +1707,7 @@ inline void table_column_buffer::append( const table_column_buffer& tableFrom, c
 }
 
 
-/** ---------------------------------------------------------------------------
+/** ------------------------------------------------------------------------- append
  * @brief Append selected data from "from" table into selected columns in source (this) table
  * @param tableFrom table data is appended from
  * @param vectorColumnIndexFrom index to columns cell values are copied from
@@ -1705,7 +1718,7 @@ inline void table_column_buffer::append( const table_column_buffer& tableFrom, c
    append( tableFrom, vectorColumnIndexFrom.data(), vectorColumnIndexTo.data(), uColumnCount );
 }
 
-/** ---------------------------------------------------------------------------
+/** ------------------------------------------------------------------------- append
  * @brief Append selected data from "from" table into selected columns in source (this) table
  * @param tableFrom table data is appended from
  * @param vectorColumnIndexFrom index to columns cell values are copied from
@@ -1716,7 +1729,7 @@ inline void table_column_buffer::append( const table_column_buffer& tableFrom, c
    append( tableFrom, vectorColumnIndexFrom.data(), vectorColumnIndexTo.data(), uColumnCount, tag_convert{});
 }
 
-/** ---------------------------------------------------------------------------
+/** ------------------------------------------------------------------------- find_variant_view
  * @brief find value in column
  * @param stringName name for column where value are searched
  * @param uStartRow start row
@@ -1729,7 +1742,7 @@ inline int64_t table_column_buffer::find_variant_view(const std::string_view& st
    return find_variant_view( uColumn, uStartRow, uCount, variantviewFind );
 }
 
-/** ---------------------------------------------------------------------------
+/** ------------------------------------------------------------------------- harvest
  * @brief harvest selected columns from selected rows into table
  * @param vectorColumnName columns to harvest values from
  * @param vectorRow selected rows to read values from
@@ -1740,7 +1753,7 @@ inline void table_column_buffer::harvest(const std::vector< std::string_view >& 
    harvest( vectorColumn, vectorRow, tableHarvest );
 }
 
-/** ---------------------------------------------------------------------------
+/** ------------------------------------------------------------------------- harvest
  * @brief return vector with values in row. cast to specified type
  * @param uRow row where cells exists
  * @param uColumn first column
@@ -1759,7 +1772,7 @@ std::vector<TYPE> table_column_buffer::harvest( uint64_t uRow, unsigned uColumn,
 }
 
 
-/** ---------------------------------------------------------------------------
+/** ------------------------------------------------------------------------- harvest
  * @brief get vector with values based starting from selected row and count of values
  * @param uColumn column index values are taken from
  * @param uFrom start row where harvesting starts

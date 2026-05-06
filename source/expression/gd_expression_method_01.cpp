@@ -1,6 +1,10 @@
 #include <algorithm>
 #include <cmath>
 
+#include "gd/gd_binary.h"
+
+#include "../math/gd_math_string.h"  //math related methods
+
 #include "gd_expression_method_01.h"
 
 _GD_EXPRESSION_BEGIN 
@@ -10,24 +14,13 @@ _GD_EXPRESSION_BEGIN
 //============================================================================
 
 
+/// 
 std::pair<bool, std::string> average_g(const std::vector<value>& vectorArgument, value* pvalueResult)
-{                                                                                                  assert(vectorArgument.size() > 2);
-   const auto& l_ = vectorArgument[0]; 
-   const auto& r_ = vectorArgument[1];
-
-   if(  l_.is_integer() == true && r_.is_integer() == true )
-   {
-      *pvalueResult = ( l_.as_integer() + r_.as_integer() ) / 2;
-   }
-   else if( l_.is_double() == true && r_.is_double() == true )
-   {
-      *pvalueResult = ( l_.as_double() + r_.as_double() ) / 2.0;
-   }
-   else
-   {
-      return { false, "average_g - Invalid argument type" };
-   }
-
+{
+   if( vectorArgument.empty() ) return { false, "average requires at least 1 argument" };
+   double dSum = 0.0;
+   for( const auto& v : vectorArgument ) { dSum += v.as_double(); }
+   *pvalueResult = value(dSum / static_cast<double>(vectorArgument.size()));
    return { true, "" };
 }
 
@@ -43,71 +36,296 @@ std::pair<bool, std::string> length_g( const std::vector< value >& vectorArgumen
    return { true, "" };
 }
 
-/// Return the maximum of two numbers.
+
+/// Return the maximum of multiple values. If the first argument is a string, all arguments will be treated
+/// as strings and the lexicographically maximum string will be returned. Otherwise, all arguments will be
+/// treated as numbers and the maximum number will be returned.
 std::pair<bool, std::string> max_g(const std::vector<value>& vectorArgument, value* pvalueResult)
-{                                                                                                  assert(vectorArgument.size() > 1);
-   const auto& l_ = vectorArgument[0];
-   const auto& r_ = vectorArgument[1];
+{
+   if( vectorArgument.empty() ) return { false, "max requires at least 1 argument" };
 
-   if( l_.is_integer() == true && r_.is_integer() == true )
+   if( vectorArgument.front().is_string() == true )
    {
-      *pvalueResult = std::max(l_.as_integer(), r_.as_integer());
-   }
-   else if( l_.is_double() == true && r_.is_double() == true )
-   {
-      *pvalueResult = std::max(l_.as_double(), r_.as_double());
+      // ## Find lexicographically maximum string
+      std::string stringMax = vectorArgument[0].as_string();
+      for( size_t i = 1; i < vectorArgument.size(); ++i )
+      {
+         std::string stringCurrent = vectorArgument[i].as_string();
+         if( stringCurrent > stringMax ) { stringMax = stringCurrent; }
+      }
+      *pvalueResult = value(stringMax);
    }
    else
    {
-      return { false, "max_g - Invalid argument type" };
+      // ## Find maximum number
+      double dMax = vectorArgument[0].as_double();
+      for( size_t i = 1; i < vectorArgument.size(); ++i )
+      {
+         double d_ = vectorArgument[i].as_double();
+         if( d_ > dMax ) { dMax = d_; }
+      }
+      *pvalueResult = value(dMax);
    }
-  
+   
    return { true, "" };
 }
 
-/// Returns the minimum of two values.
+/// Return the minimum of multiple values. If the first argument is a string, all arguments will be treated
+/// as strings and the lexicographically minimum string will be returned. Otherwise, all arguments will be
+/// treated as numbers and the minimum number will be returned.
 std::pair<bool, std::string> min_g(const std::vector<value>& vectorArgument, value* pvalueResult)
-{                                                                                                  assert(vectorArgument.size() > 1);
-   const auto& l_ = vectorArgument[0];
-   const auto& r_ = vectorArgument[1];
-   
-   if( l_.is_integer() == true && r_.is_integer() == true )
+{
+   if( vectorArgument.empty() ) return { false, "min requires at least 1 argument" };
+
+   // Check first value if it is string or number
+   if( vectorArgument.front().is_string() == true )
    {
-      *pvalueResult = std::min(l_.as_integer(), r_.as_integer());
-   }
-   else if( l_.is_double() == true && r_.is_double() == true )
-   {
-      *pvalueResult = std::min(l_.as_double(), r_.as_double());
+      // Find lexicographically minimum string
+      std::string stringMin = vectorArgument[0].as_string();
+      for( size_t i = 1; i < vectorArgument.size(); ++i )
+      {
+         std::string stringCurrent = vectorArgument[i].as_string();
+         if( stringCurrent < stringMin ) { stringMin = stringCurrent; }
+      }
+      *pvalueResult = value(stringMin);
    }
    else
    {
-      return { false, "min_g - Invalid argument type" };
+      // ## Find minimum number
+      double dMin = vectorArgument[0].as_double();
+      for( size_t i = 1; i < vectorArgument.size(); ++i )
+      {
+         double d_ = vectorArgument[i].as_double();
+         if( d_ < dMin ) { dMin = d_; }
+      }
+      *pvalueResult = value(dMin);
    }
-
+   
    return { true, "" };
 }
 
-/// Sum two numbers and return the result.
+/// Return true if all arguments evaluate to true (logical AND across all arguments).
+/// Arguments are treated as booleans according to the value's truthiness.
+std::pair<bool, std::string> all_true_g(const std::vector<value>& vectorArgument, value* pvalueResult)
+{
+   if( vectorArgument.empty() ) return { false, "all_true requires at least 1 argument" };
+
+   for( const auto& v : vectorArgument )
+   {
+      bool bValue = v.as_bool(); // Convert value to boolean using its truthiness
+      if( bValue == false )
+      {
+         *pvalueResult = value(false);
+         return { true, "" };
+      }
+   }
+   *pvalueResult = value(true);
+   return { true, "" };
+}
+
+/// Return true if any argument evaluates to true (logical OR across all arguments).
+/// Arguments are treated as booleans according to the value's truthiness.
+std::pair<bool, std::string> any_true_g(const std::vector<value>& vectorArgument, value* pvalueResult)
+{
+   if( vectorArgument.empty() ) return { false, "any_true requires at least 1 argument" };
+
+   for( const auto& v : vectorArgument )
+   {
+      bool bValue = v.as_bool(); // Convert value to boolean using its truthiness
+      if( bValue == true )
+      {
+         *pvalueResult = value(true);
+         return { true, "" };
+      }
+   }
+   *pvalueResult = value(false);
+   return { true, "" };
+}
+
+/// Sum multiple numbers or concatenate strings and return the result. If the first argument is a
+/// string, all arguments will be treated as strings and concatenated. Otherwise, all arguments
+/// will be treated as numbers and summed.
 std::pair<bool, std::string> sum_g(const std::vector<value>& vectorArgument, value* pvalueResult)
-{                                                                                                  assert(vectorArgument.size() > 1);
-   const auto& l_ = vectorArgument[0];
-   const auto& r_ = vectorArgument[1];
-   
-   if( l_.is_integer() == true && r_.is_integer() == true )
+{
+   if( vectorArgument.empty() ) return { false, "sum requires at least 1 argument" };
+
+   // ## Check first value if it is string or number
+   if( vectorArgument.front().is_string() == true )                           // if first value is string, we will concatenate all values as strings, otherwise we will sum them as numbers
    {
-      *pvalueResult = l_.as_integer() + r_.as_integer();
-   }
-   else if( l_.is_double() == true && r_.is_double() == true )
-   {
-      *pvalueResult = l_.as_double() + r_.as_double();
+      std::string stringResult;
+      // ## Concatenate all values as strings, note that vector is in reverse order, so we will concatenate them in reverse order to get the correct result
+      for( auto it = vectorArgument.rbegin(), itEnd = vectorArgument.rend(); it != itEnd; ++it )
+      {
+         stringResult += it->as_string();
+      }
+      *pvalueResult = value(stringResult);
    }
    else
    {
-      return { false, "sum_g - Invalid argument type" };
+      double dSum = 0.0;
+      for( const auto& v : vectorArgument ) { dSum += v.as_double(); }
+      *pvalueResult = value(dSum);
    }
 
    return { true, "" };
 }
+
+/// Return the median value from a list of numbers.
+/// If the first argument is a string, all arguments will be treated as strings and the median
+/// string (lexicographically middle) will be returned. Otherwise, numeric median is returned.
+std::pair<bool, std::string> median_g(const std::vector<value>& vectorArgument, value* pvalueResult)
+{
+   if( vectorArgument.empty() ) return { false, "median requires at least 1 argument" };
+
+   if( vectorArgument.front().is_string() == true )                           // Check if first value is string or number
+   {
+      // ## Collect all strings
+      std::vector<std::string> vectorStrings;
+      for( const auto& v_ : vectorArgument ) { vectorStrings.push_back(v_.as_string()); }
+      
+      std::sort(vectorStrings.begin(), vectorStrings.end());                  // Sort strings lexicographically
+      
+      // ## Find median
+      size_t uSize = vectorStrings.size();
+      std::string stringMedian;
+      if( uSize % 2 == 0 )
+      {
+         stringMedian = vectorStrings[uSize / 2 - 1];                         // Even number of strings - return the lower median (or could average? Usually pick lower for strings)
+      }
+      else { stringMedian = vectorStrings[uSize / 2]; }                       // Odd number of strings
+      
+      *pvalueResult = value(stringMedian);
+   }
+   else
+   {
+      // ## Collect all numbers
+      std::vector<double> vectorNumbers;
+      for( const auto& v : vectorArgument ) { vectorNumbers.push_back(v.as_double()); }
+      
+      std::sort(vectorNumbers.begin(), vectorNumbers.end());                 // Sort numbers
+      
+      // ## Find median
+      size_t size = vectorNumbers.size();
+      double dMedian;
+      if( size % 2 == 0 ) { dMedian = (vectorNumbers[size / 2 - 1] + vectorNumbers[size / 2]) / 2.0; } // Even number of values - average the two middle values
+      else { dMedian = vectorNumbers[size / 2]; }                             // Odd number of values
+      
+      *pvalueResult = value(dMedian);
+   }
+   
+   return { true, "" };
+}
+
+
+/// Calculate the sample standard deviation of a list of numbers.
+/// Only works with numeric arguments.
+std::pair<bool, std::string> stddev_g(const std::vector<value>& vectorArgument, value* pvalueResult)
+{
+   if( vectorArgument.empty() ) return { false, "stddev requires at least 1 argument" };
+   
+   // Calculate mean first
+   double dSum = 0.0;
+   for( const auto& v : vectorArgument ) { dSum += v.as_double(); }
+   double dMean = dSum / vectorArgument.size();
+   
+   // Calculate sum of squared differences
+   double dSumSqDiff = 0.0;
+   for( const auto& v : vectorArgument )
+   {
+      double dDiff = v.as_double() - dMean;
+      dSumSqDiff += dDiff * dDiff;
+   }
+   
+   // Sample standard deviation (use n-1 for sample variance)
+   double variance = dSumSqDiff / (vectorArgument.size() - 1);
+   double dStdDev = std::sqrt(variance);
+   
+   *pvalueResult = value(dStdDev);
+   return { true, "" };
+}
+
+
+/// Return the product of multiple numbers.
+/// If the first argument is a string, returns an error since product doesn't make sense for strings.
+std::pair<bool, std::string> product_g(const std::vector<value>& vectorArgument, value* pvalueResult)
+{
+   if( vectorArgument.empty() ) return { false, "product requires at least 1 argument" };
+ 
+   double dProduct = 1.0;
+   for( const auto& v : vectorArgument ) { dProduct *= v.as_double(); }
+   *pvalueResult = value(dProduct);
+   return { true, "" };
+}
+
+/// Calculate the sample variance of a list of numbers.
+/// Only works with numeric arguments.
+std::pair<bool, std::string> variance_g(const std::vector<value>& vectorArgument, value* pvalueResult)
+{
+   if( vectorArgument.empty() ) return { false, "variance requires at least 1 argument" };
+   
+   // Calculate mean first
+   double dSum = 0.0;
+   for( const auto& v : vectorArgument ) { dSum += v.as_double(); }
+   double dMean = dSum / vectorArgument.size();
+   
+   // Calculate sum of squared differences
+   double dSumSqDiff = 0.0;
+   for( const auto& v : vectorArgument )
+   {
+      double dDiff = v.as_double() - dMean;
+      dSumSqDiff += dDiff * dDiff;
+   }
+   
+   // Sample variance (use n-1 for sample variance)
+   double dVariance = dSumSqDiff / (vectorArgument.size() - 1);
+   
+   *pvalueResult = value(dVariance);
+   return { true, "" };
+}
+
+/// Return the first non-null value from the list of arguments.
+/// If all arguments are null, returns null.
+/// This function handles any value types (strings, numbers, booleans, etc.)
+std::pair<bool, std::string> coalesce_g(const std::vector<value>& vectorArgument, value* pvalueResult)
+{
+   if( vectorArgument.empty() ) return { false, "coalesce requires at least 1 argument" };
+
+   // Iterate through all arguments and return the first non-null value
+   for( const auto& v : vectorArgument )
+   {
+      if( !v.is_null() )
+      {
+         *pvalueResult = v;
+         return { true, "" };
+      }
+   }
+   
+   *pvalueResult = value();                                                  // If all arguments are null, return null
+   return { true, "" };
+}
+
+/// Check if a value exists (is not null) and return the value if it exists, otherwise return null.
+std::pair<bool, std::string> exists_g(const std::vector<value>& vectorArgument, value* pvalueResult)
+{                                                                                                  assert(vectorArgument.size() > 1);
+   const auto& v_ = vectorArgument[1];
+
+   bool bExists = false;
+
+   if( v_.is_bool() == true ) { bExists = v_.as_bool(); }
+   else if( v_.is_null() == false ) { bExists = true; }
+   
+   if( bExists == true )
+   {
+      *pvalueResult = vectorArgument[0];
+      return { true, "" };
+   }
+   else
+   {
+      *pvalueResult = value();                                                  // return null if value does not exist
+      return { true, "" };
+   }
+}
+   
 
 /// Calculate absolute value
 std::pair<bool, std::string> abs_g(const std::vector<value>& vectorArgument, value* pvalueResult)
@@ -316,19 +534,48 @@ std::pair<bool, std::string> find_g(const std::vector< value >& vectorArgument, 
    return { false, "find_g - Invalid argument type" };
 }
 
-/// Check if word (needle) is contained in text (haystack).
-std::pair<bool, std::string> has_g(const std::vector< value >& vectorArgument, value* pvalueResult)
-{                                                                                                  assert(vectorArgument.size() > 1);
-   const auto& haystack_ = vectorArgument[1];
-   const auto& needle_ = vectorArgument[0];
-   if( haystack_.is_string() && needle_.is_string() )
-   {
-      auto stringText = haystack_.as_string_view();
-      auto stringWord = needle_.as_string_view();
-      *pvalueResult = (stringText.find(stringWord) != std::string_view::npos);
-      return { true, "" };
+/// Check if any of the needles (all arguments except last, that is first)
+std::pair<bool, std::string> has_g( const std::vector< value >& vectorArgument, value* pvalueResult )
+{
+   if( vectorArgument.empty() ) return { false, "has requires at least 1 argument" };
+
+   std::string stringTemporary;
+   std::string_view stringHaystack;
+   const auto& haystack_ = vectorArgument.back();
+   if( haystack_.is_string() == false ) 
+   { 
+      stringTemporary = haystack_.as_string();                                // convert to string if not string, this allows us to check for substrings in non-string values
+      stringHaystack = stringTemporary;                                       // use string view for searching, this allows us to avoid unnecessary string copies
    }
-   return { false, "has_g - Invalid argument type" };
+   else { stringHaystack = haystack_.as_string_view(); }
+  
+
+   // ## check if haystack has any of the needles, check backwards since haystack is last argument and needles are all arguments before haystack
+   for( size_t u = 0; u < vectorArgument.size() - 1; ++u )
+   {
+      const auto& needle_ = vectorArgument[u];
+      if( needle_.is_string() == true )
+      { 
+         std::string_view s_ = needle_.as_string_view();                      // get string view of needle, this allows us to avoid unnecessary string copies
+         if( stringHaystack.find(s_) != std::string_view::npos )
+         {
+            *pvalueResult = true;
+            return { true, "" };
+         }
+      }
+      else
+      {
+         auto stringNeedle = needle_.as_string();                             // get string of needle
+         if( stringHaystack.find(stringNeedle) != std::string_view::npos )
+         {
+            *pvalueResult = true;
+            return { true, "" };
+         } 
+      }
+   }
+
+   *pvalueResult = false;
+   return { true, "" };
 }
 
 /// Check if word (needle) is not contained in text (haystack).
@@ -846,6 +1093,75 @@ std::pair<bool, std::string> has_tag_g(const std::vector< value >& vectorArgumen
       return { true, "" };
    }
    return { false, "has_tag_g - Invalid argument type" };
+}
+
+/// Format IP address as hex string, optionally truncating to specified size (number of characters)
+std::pair<bool, std::string> ip_format_g( const std::vector<value>& vectorArgument, value* pvalueResult )
+{                                                                                                  assert(vectorArgument.size() > 2);
+   const auto& ip_ = vectorArgument[2];
+   const auto& format_ = vectorArgument[1];
+   const auto& size_ = vectorArgument[0];
+
+   if( ip_.is_string() && format_.is_string() && size_.is_integer() )
+   {
+      auto stringIP = ip_.as_string_view();
+      auto stringFormat = format_.as_string_view();
+      auto iSize = size_.as_integer();
+
+      std::string stringResult = gd::math::string::ip_format( stringIP, stringFormat, static_cast<unsigned>(iSize) );
+
+      *pvalueResult = stringResult;
+      return { true, "" };
+   }
+
+   return { false, "ip_format - Invalid argument type" };
+}
+
+/// Validate if string is a valid IP address, returns formatted IP if valid, otherwise returns empty string
+std::pair<bool, std::string> ip_validate_g(const std::vector<value>& vectorArgument, value* pvalueResult)
+{                                                                                                  assert( vectorArgument.size() > 0 );
+   const auto& ip_ = vectorArgument[0];
+   if( ip_.is_string() )
+   {
+      auto stringIP = ip_.as_string_view();
+      *pvalueResult = gd::math::string::ip_validate( stringIP );
+      return { true, "" };
+   }
+   return { false, "ip_validate - Invalid argument type" }; 
+}
+
+/// Join multiple values into a single string with a specified delimiter (last argument is the delimiter)
+std::pair<bool, std::string> join_g( const std::vector<value>& vectorArgument, value* pvalueResult )
+{                                                                                                  assert( vectorArgument.size() > 0 );
+   if( vectorArgument.size() < 2 ) return { false, "join_g requires at least 2 arguments" };
+
+   const auto& delimiter_ = vectorArgument.back();
+   std::string stringDelimiter;
+
+   if( delimiter_.is_string() == true ) stringDelimiter = delimiter_.as_string();
+
+   std::string stringResult;
+
+   // ## arguments are reversed so go from last to first, skip last argument since it's the delimiter
+
+   for( size_t u = vectorArgument.size() - 1; u > 0; --u )
+   {
+      const auto& v_ = vectorArgument[u - 1];
+      std::string stringValue;
+      if( v_.is_string() ) { stringValue = v_.as_string(); }
+      else if( v_.is_integer() ) { stringValue = std::to_string( v_.as_integer() ); }
+      else if( v_.is_double() ) { stringValue = std::to_string( v_.as_double() ); }
+      else if( v_.is_bool() ) { stringValue = v_.as_bool() ? "true" : "false"; }
+      else if( v_.is_null() ) { stringValue = "null"; }
+      else { return { false, "join_g - Invalid argument type" }; }
+    
+      if( u < vectorArgument.size() - 1 ) { stringResult += stringDelimiter; }
+
+      stringResult += stringValue;
+   }
+
+   *pvalueResult = stringResult;
+   return { true, "" };
 }
 
 /// Returns a comma-separated list of unique tags from text.

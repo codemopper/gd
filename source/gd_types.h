@@ -294,6 +294,9 @@ struct tag_create {};
 /// tag dispatcher used to convert data from one type to another
 struct tag_convert {}; 
 
+/// tag dispatcher used to detect type of data, like detecting if data is integer, decimal or text or parsing format of data
+struct tag_parse {}; 
+
 /// tag dispatcher used to copy data from one type to another 
 struct tag_copy {}; 
 
@@ -626,7 +629,7 @@ constexpr bool is_reference_g( unsigned uType ) { return uType & eTypeDetailRefe
 */
 constexpr unsigned value_group_type_g( unsigned uType ) { return (uType & 0x0000ff00); }
 
-
+/// @brief Get size for type number, this is the needed size in memory to store values of the type
 constexpr unsigned value_size_g(enumTypeNumber eTypeNumber)
 {
    switch( eTypeNumber )
@@ -721,7 +724,7 @@ constexpr unsigned value_size_g(unsigned uTypeNumber, unsigned uCount)
 }
 
 
-/** ---------------------------------------------------------------------------
+/** -------------------------------------------------------------------------- validate_number_type_g
  * @brief Checks if type number is a valid type
  * The lower byte in  number is used to set number type
  * @param uTypeNumber type to check
@@ -733,6 +736,34 @@ constexpr bool validate_number_type_g( unsigned uTypeNumber )
    return uCheckType < eTypeNumberMAX;
 }
 
+/// @brief calculate the max size in text for number fixed types
+constexpr unsigned value_textsize_g(enumTypeNumber eTypeNumber)
+{
+   switch( eTypeNumber )
+   {
+   case eTypeNumberUnknown: return 0;
+   case eTypeNumberBool: return 5; // "false"
+   case eTypeNumberInt8: return 4;
+   case eTypeNumberUInt8: return 3;
+   case eTypeNumberInt16: return 6;
+   case eTypeNumberUInt16: return 5;
+   case eTypeNumberInt32: return 11;
+   case eTypeNumberUInt32: return 10;
+   case eTypeNumberInt64: return 20;
+   case eTypeNumberUInt64: return 20;
+   case eTypeNumberFloat: return 24; // max text size for float is around 24 characters
+   case eTypeNumberDouble: return 25; // max text size for double is around 25 characters
+   case eTypeNumberPointer: return sizeof( void* ) * 2; // pointer size in hex
+   case eTypeNumberGuid: return 36; // standard guid format is 36 characters
+   default: return 0;
+   } 
+}
+
+/// @brief calculate the max size in text for number fixed types
+constexpr unsigned value_textsize_g( unsigned uTypeNumber )
+{
+   return value_textsize_g( static_cast<enumTypeNumber>(uTypeNumber & 0x00000000ff) );
+}
 
 /** ---------------------------------------------------------------------------
  * @brief Convert type name from string to constant type value
@@ -743,7 +774,7 @@ eType = type_g("int8");             assert( eType == eTypeInt8 );
  * @param stringType type sent as string
  * @return {enumType} type constant
 */
-constexpr enumType type_g( const std::string_view& stringType )
+constexpr enumType type_g( std::string_view stringType )
 {                                                                                                  assert( stringType.length() >= 2 );
    using namespace detail;
 
@@ -795,7 +826,7 @@ constexpr enumType type_g( const std::string_view& stringType )
    case hash_type("floa"): eType = eTypeCFloat;  break;                       // float
 
    case hash_type("i128"): eType = eTypeInt128;  break;                       // int128
-   case hash_type("i256"): eType = eTypeInt256;  break;                       // int254
+   case hash_type("i256"): eType = eTypeInt256;  break;                       // int256
    case hash_type("i512"): eType = eTypeInt512;  break;                       // int512
 
    case hash_type("int8"): eType = eTypeInt8;  break;                         // int8

@@ -1,3 +1,5 @@
+// @FILE [tag: expression, method] [summary: Header file for expression methods] [description: This header file defines a set of functions that implement various expression methods for the GD expression engine.] [name: gd_expression_method_01.h] [type: header] 
+
 /**
 * @file gd_expression_method_01.h
 * 
@@ -29,7 +31,21 @@ _GD_EXPRESSION_BEGIN
 std::pair<bool, std::string> average_g(const std::vector< value >& vectorArgument, value* pvalueResult);
 std::pair<bool, std::string> max_g(const std::vector< value >& vectorArgument, value* pvalueResult);
 std::pair<bool, std::string> min_g(const std::vector< value >& vectorArgument, value* pvalueResult);  
+
+
+std::pair<bool, std::string> all_true_g(const std::vector< value >& vectorArgument, value* pvalueResult);
+std::pair<bool, std::string> any_true_g(const std::vector< value >& vectorArgument, value* pvalueResult);
+
 std::pair<bool, std::string> sum_g(const std::vector< value >& vectorArgument, value* pvalueResult);
+
+std::pair<bool, std::string> median_g(const std::vector< value >& vectorArgument, value* pvalueResult);
+std::pair<bool, std::string> stddev_g(const std::vector< value >& vectorArgument, value* pvalueResult);
+std::pair<bool, std::string> product_g(const std::vector< value >& vectorArgument, value* pvalueResult);
+std::pair<bool, std::string> variance_g(const std::vector< value >& vectorArgument, value* pvalueResult);
+
+std::pair<bool, std::string> coalesce_g(const std::vector< value >& vectorArgument, value* pvalueResult);  
+std::pair<bool, std::string> exists_g(const std::vector< value >& vectorArgument, value* pvalueResult);  
+
 std::pair<bool, std::string> abs_g(const std::vector<value>& vectorArgument, value* pvalueResult);
 std::pair<bool, std::string> round_g(const std::vector<value>& vectorArgument, value* pvalueResult);
 std::pair<bool, std::string> floor_g(const std::vector<value>& vectorArgument, value* pvalueResult);
@@ -46,6 +62,9 @@ std::pair<bool, std::string> count_g(const std::vector< value >& vectorArgument,
 std::pair<bool, std::string> find_g(const std::vector< value >& vectorArgument, value* pvalueResult);
 std::pair<bool, std::string> has_g(const std::vector< value >& vectorArgument, value* pvalueResult);
 std::pair<bool, std::string> has_tag_g(const std::vector< value >& vectorArgument, value* pvalueResult);
+std::pair<bool, std::string> ip_format_g(const std::vector<value>& vectorArgument, value* pvalueResult);
+std::pair<bool, std::string> ip_validate_g(const std::vector<value>& vectorArgument, value* pvalueResult);
+std::pair<bool, std::string> join_g(const std::vector<value>& vectorArgument, value* pvalueResult);
 std::pair<bool, std::string> list_tags_g(const std::vector< value >& vectorArgument, value* pvalueResult);
 std::pair<bool, std::string> missing_g(const std::vector< value >& vectorArgument, value* pvalueResult);
 std::pair<bool, std::string> starts_with_g(const std::vector< value >& vectorArgument, value* pvalueResult);
@@ -75,17 +94,26 @@ std::pair<bool, std::string> mid_g(const std::vector<value>& vectorArgument, val
 // Arguments format: method_name(arg1, arg2, ...)
 const method pmethodDefault_g[] = {
    { (void*)&abs_g, "abs", 1, 1},                    // abs(number) - absolute value
-   { (void*)&average_g, "average", 2, 1},           // average(a, b) - mean of two numbers
+   { (void*)&all_true_g, "all_true", 1, 1, method::eFlagVarArgs }, // all_true(a, b, ...) - all values true?
+   { (void*)&any_true_g, "any_true", 1, 1, method::eFlagVarArgs }, // any_true(a, b, ...) - any value true?
+   { (void*)&average_g, "average", 1, 1, method::eFlagVarArgs },// average(a, b, ...) — min 1 arg
    { (void*)&ceil_g, "ceil", 1, 1},                 // ceil(number) - round up to integer
+   { (void*)&coalesce_g, "coalesce", 1, 1, method::eFlagVarArgs }, // coalesce(a, b, ...) - first non-null
+   { (void*)&exists_g, "exists", 2, 1},             // exists(value) - check if value exists and if so it returns argument, otherwise returns null
    { (void*)&floor_g, "floor", 1, 1},               // floor(number) - round down to integer
    { (void*)&if_g, "if", 3, 1 },                    // if(condition, true_value, false_value)
    { (void*)&is_not_null_g, "is_not_null", 1, 1 },  // is_not_null(value) - check not null
    { (void*)&is_null_g, "is_null", 1, 1 },          // is_null(value) - check if null
-   { (void*)&max_g, "max", 2, 1 },                  // max(a, b) - greater of two values
-   { (void*)&min_g, "min", 2, 1 },                  // min(a, b) - lesser of two values
+   { (void*)&max_g, "max", 1, 1, method::eFlagVarArgs },// max(a, b, ...)     — max 1 arg
+   { (void*)&median_g, "median", 1, 1, method::eFlagVarArgs },  // median(a, b, ...) - middle value
+   { (void*)&min_g, "min", 1, 1, method::eFlagVarArgs },// min(a, b, ...)     — min 1 arg
+   { (void*)&product_g, "product", 1, 1, method::eFlagVarArgs }, // product(a, b, ...) - multiply all numbers
    { (void*)&round_g, "round", 1, 1 },              // round(number) - round to nearest integer
-   { (void*)&sum_g, "sum", 2, 1 }                   // sum(a, b) - add two numbers
+   { (void*)&stddev_g, "stddev", 1, 1, method::eFlagVarArgs },  // stddev(a, b, ...) - standard deviation
+   { (void*)&sum_g, "sum", 1, 1, method::eFlagVarArgs }, // sum(a, b, ...)     — min 1 arg
+   { (void*)&variance_g, "variance", 1, 1, method::eFlagVarArgs } // variance(a, b, ...)
 };
+
 
 // Calculate array size at compile time
 constexpr size_t uMethodDefaultSize_g = sizeof(pmethodDefault_g) / sizeof(method);
@@ -97,10 +125,13 @@ const method pmethodString_g[] = {
    { (void*)&count_g, "count", 2, 1 },               // count(haystack, needle) - count occurrences
    { (void*)&ends_with_g, "ends_with", 2, 1 },       // ends_with(haystack, suffix) - check string ending
    { (void*)&find_g, "find", 3, 1 },                 // find(text, word, offset) - find substring position
-   { (void*)&has_g, "has", 2, 1 },                   // has(haystack, needle) - check if contains substring
+   { (void*)&has_g, "has", 1, 1, method::eFlagVarArgs },// has(haystack, needle, ...) - check if contains substring
    { (void*)&has_tag_g, "has_tag", 2, 1 },           // has_tag(text, tag) - check if text contains tag
+   { (void*)&ip_format_g, "ip_format", 3, 1 },       // ip_format(ip, format, size) - format ip value to specified format
+   { (void*)&ip_validate_g, "ip_validate", 1, 1 },   // ip_validate(ip) - validate if string is a valid IP address
    { (void*)&is_alpha_g, "is_alpha", 1, 1 },         // is_alpha(text) - check if only alphabetic chars
    { (void*)&is_empty_g, "is_empty", 1, 1 },         // is_empty(text) - check if empty or whitespace
+   { (void*)&join_g, "join", 2, 1, method::eFlagVarArgs }, // join(value1, value2, ..., delimiter) - join values with delimiter
    { (void*)&left_g, "left", 2, 1 },                 // left(text, count) - get leftmost characters
    { (void*)&length_g, "length", 1, 1 },             // length(text) - get string length
    { (void*)&list_tags_g, "list_tags", 1, 1 },       // list_tags(text) - extract unique tags as CSV

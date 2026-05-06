@@ -52,6 +52,7 @@ struct method
       eFlagUnknown = 0x00, ///< no flags
       eFlagRuntime = 0x01, ///< pass runtime as first argument
       eFlagVoid    = 0x02, ///< no return value
+      eFlagVarArgs = 0x04, ///< variable number of arguments
    };
 
    using method_0 = std::pair<bool, std::string>(*)(const std::vector<value>&);
@@ -200,12 +201,16 @@ struct runtime
 
    int find_variable(const std::string_view& stringName) const;
    const value::variant_t& get_variable(size_t uIndex) const;
+   value::variant_t get_variable( std::string_view stringName ) const;
+
    void set_variable(size_t uIndex, const value::variant_t& value_) { m_vectorVariable[uIndex].second = value_; }
    void set_variable(const std::string_view& stringName, const value::variant_t& value_);
 
    void get_all_variables(std::vector<std::pair<std::string, value::variant_t>>& vectorVariable) const;
    void get_all_variables(std::vector<std::pair<std::string, value::variant_t>>&& vectorVariable) const;
    std::vector< std::pair<std::string, value::variant_t>> get_all_variables() const { return m_vectorVariable; }
+   void set_all_variables( const std::vector<std::pair<std::string, value::variant_t>>& vectorVariable ) { m_vectorVariable = vectorVariable; }
+   void set_all_variables( std::vector<std::pair<std::string, value::variant_t>>&& vectorVariable ) { m_vectorVariable = std::move( vectorVariable ); }
 
 
    /// @brief try to find variable value by name and use callback function to find it

@@ -252,6 +252,9 @@ public:
       void cell_set( unsigned uColumn, const gd::variant_view& variantviewValue, tag_convert ) { m_ptable->cell_set( m_uRow, uColumn, variantviewValue, tag_convert{} ); }
       void cell_set( const std::string_view& stringName, const gd::variant_view& variantviewValue, tag_convert ) { m_ptable->cell_set( m_uRow, stringName, variantviewValue, tag_convert{} ); }
 
+      bool cell_is_null( unsigned uColumn ) const { return m_ptable->cell_is_null( m_uRow, uColumn ); }
+      bool cell_is_null( std::string_view stringName ) const { return m_ptable->cell_is_null( m_uRow, stringName ); }
+
       uint64_t m_uRow;     ///< active row index
       table* m_ptable; ///< pointer to table that owns the iterator
    };
@@ -277,9 +280,13 @@ public:
       const_iterator_row operator-( int64_t iDistance ) { return const_iterator_row( m_uRow - iDistance, m_ptable ); }
 
       gd::variant_view cell_get_variant_view( unsigned uIndex ) const { return m_ptable->cell_get_variant_view( m_uRow, uIndex ); }
+      gd::variant_view cell_get_variant_view( unsigned uIndex, tag_not_null ) const { return m_ptable->cell_get_variant_view( m_uRow, uIndex, tag_not_null{} ); }
       gd::variant_view cell_get_variant_view( std::string_view stringName ) const { return m_ptable->cell_get_variant_view( m_uRow, stringName ); }
       gd::variant_view cell_get_variant_view( std::string_view stringName, tag_not_null ) const { return m_ptable->cell_get_variant_view( m_uRow, stringName, tag_not_null{} ); }
       std::vector< gd::variant_view > cell_get_variant_view() const { return m_ptable->cell_get_variant_view( m_uRow ); }
+
+      bool cell_is_null( unsigned uColumn ) const { return m_ptable->cell_is_null( m_uRow, uColumn ); }
+      bool cell_is_null( std::string_view stringName ) const { return m_ptable->cell_is_null( m_uRow, stringName ); }
 
       uint64_t m_uRow;
       const table* m_ptable;
@@ -666,14 +673,13 @@ public:
 
    int64_t row_get_variant_view( unsigned uColumn, const gd::variant_view& variantviewFind, std::vector<gd::variant_view>& vectorValue ) const;
 
+   // @API [tag: arguments] [description: row arguments management methods]
+
    /// @name get values in row packed in arguments object
-   /// reserve memory to store more rows in table
-   ///@{
    void row_get_arguments( uint64_t uRow, gd::argument::arguments& argumentsValue ) const;
    gd::argument::arguments row_get_arguments( uint64_t uRow ) const { gd::argument::arguments a_; row_get_arguments( uRow, a_ ); return a_; }
    gd::argument::arguments row_get_arguments( uint64_t uRow, const unsigned* puIndex, unsigned uSize ) const;
    gd::argument::arguments row_get_arguments( uint64_t uRow, const std::vector<unsigned>& vectorIndex ) const { return row_get_arguments( uRow, vectorIndex.data(), (unsigned)vectorIndex.size() ); }
-   ///@}
 
    /// create arguments object for row where extra values are stored
    gd::argument::shared::arguments* row_create_arguments( uint64_t uRow );
@@ -688,6 +694,8 @@ public:
 
    /// delete arguments object for selected row
    void row_arguments_delete( uint64_t uRow );
+   /// Count number of rows with arguments object
+   uint64_t row_arguments_count() const noexcept;
 
    bool row_for_each( std::function<bool( std::vector<gd::variant_view>&, uint64_t )> callback_ );
    bool row_for_each( std::function<bool( const std::vector<gd::variant_view>&, uint64_t )> callback_ ) const;
