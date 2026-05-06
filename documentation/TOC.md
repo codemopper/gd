@@ -1,10 +1,12 @@
 # **GD code** Documentation in brief format
 
-GD (general development) are code that are used to work with primitive and common derived values.
-Only dependencies are C++20 and the standard library.
+**GD Code** (General Development) provides utilities for working with primitive and common derived values.
+Only dependencies are C++20 and the standard library.  
+**Dependencies:** C++20 and the standard library only.  
 
-Why GD code?
-GD code is designed to provide **runtime** support for efficient and flexible data handling and make code safer. Code checks it's correctness at runtime, ensuring that data is handled correctly and safely.
+#### Why GD Code?
+GD Code is designed to provide runtime support for efficient, flexible, and safer data handling.  
+It verifies correctness at runtime, ensuring that data is handled properly and safely.  
 
 ## Core dependency for gd code
 
@@ -42,6 +44,8 @@ High performance table operations.
 
 Objects that are optimized for performance and memory usage that mimic the standard library containers.
 
+- [Arena](GD_ARENA.MD) - *High-performance memory allocator*
+- [Arena with borrow](GD_ARENA_BORROW.MD) - *High-performance memory allocator with borrow support*
 - [Optimized Vector](GD_VECTOR.MD) - *Optimized vector variants*
 
 ## Command Line Documentation
@@ -54,6 +58,7 @@ Command line logic for terminal applications.
 
 Database operations and management. Work with any RDBMS that is compatible with the ODBC API or Sqlite
 
+- [SQL builder objects](GD_SQL_QUERY_BUILDER.MD) - *ORM For query logic, enables declarative coding to generate SQL*
 - [Format SQL](GD_SQL_VALUE.MD) - *Safe SQL Value Formatting and Templating*
 - [Database ODBC](GD_DATABASE_ODBC.MD) - *Modern ODBC wrapper for universal database connectivity*
 - [Database SQLite](GD_DATABASE_SQLITE.MD) - *Simple and safe SQLite wrapper with modern C++ interface*
@@ -76,3 +81,9 @@ Add logging and log operations for applications.
 Miscellaneous UTF8 operations. Work with any UTF8 encoded string.
 
 - [UTF8 Support](GD_UTF8.MD) - *High-performance UTF-8 string utilities for modern C++*
+
+## Expression Documentation
+
+Lightweight, high-performance expression parser and evaluator for scripting in C++.
+
+- [Expression Engine](GD_EXPRESSION__EXPRESION.MD) - *Fast, lightweight expression parser with thread-safe evaluation and custom method injection*
