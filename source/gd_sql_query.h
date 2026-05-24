@@ -432,6 +432,7 @@ public:
    table* table_add(const table& tableAdd );
    table* table_add( const gd::argument::arguments& argumentsTable, tag_arguments );
    bool table_exists( const table& tableExists ) const noexcept { return table_get( tableExists ) != nullptr; }
+   bool table_exists( std::string_view stringTable ) const noexcept { return table_get( stringTable ) != nullptr; }
    std::size_t table_size() const { return m_vectorTable.size(); }
    bool table_empty() const { return m_vectorTable.empty(); }
    uint32_t table_get_key() const { auto pTable = table_get(); return pTable ? (uint32_t)pTable->get_key() : 0; }
@@ -875,7 +876,6 @@ bool query::flag_has_s(unsigned uTest, FLAG uFlag) {
 inline void query::format_add_and_surround_s(std::string& stringText, const std::string_view& stringAdd, char iCharacter) {
    stringText.append( 1, iCharacter ).append( stringAdd ).append( 1, iCharacter );
 }
-
 
 
 _GD_SQL_QUERY_END // namespace _GD_CALCULATE_PARSE_BEGIN

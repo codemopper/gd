@@ -1233,22 +1233,22 @@ public:
    //    Set values for selected position in buffer, it could be for a name, index or pointer
    //    If position is not found, new value is appended to buffer
 
-   arguments& set(const std::string_view& stringName, std::nullptr_t) { return set(stringName, eTypeNumberBool, nullptr, 0); }
-   arguments& set(const std::string_view& stringName, bool v) { return set(stringName, eTypeNumberBool, (const_pointer)&v, sizeof(bool)); }
-   arguments& set(const std::string_view& stringName, int8_t v) { return set(stringName, eTypeNumberInt8, (const_pointer)&v, sizeof(int8_t)); }
-   arguments& set(const std::string_view& stringName, uint8_t v) { return set(stringName, eTypeNumberUInt8, (const_pointer)&v, sizeof(uint8_t)); }
-   arguments& set(const std::string_view& stringName, int16_t v) { return set(stringName, eTypeNumberInt16, (const_pointer)&v, sizeof(int16_t)); }
-   arguments& set(const std::string_view& stringName, uint16_t v) { return set(stringName, eTypeNumberUInt16, (const_pointer)&v, sizeof(uint16_t)); }
-   arguments& set(const std::string_view& stringName, int32_t v) { return set(stringName, eTypeNumberInt32, (const_pointer)&v, sizeof(int32_t)); }
-   arguments& set(const std::string_view& stringName, uint32_t v) { return set(stringName, eTypeNumberUInt32, (const_pointer)&v, sizeof(uint32_t)); }
-   arguments& set(const std::string_view& stringName, int64_t v) { return set(stringName, eTypeNumberInt64, (const_pointer)&v, sizeof(int64_t)); }
-   arguments& set(const std::string_view& stringName, uint64_t v) { return set(stringName, eTypeNumberUInt64, (const_pointer)&v, sizeof(uint64_t)); }
+   arguments& set( std::string_view stringName, std::nullptr_t) { return set(stringName, eTypeNumberBool, nullptr, 0); }
+   arguments& set( std::string_view stringName, bool v) { return set(stringName, eTypeNumberBool, (const_pointer)&v, sizeof(bool)); }
+   arguments& set( std::string_view stringName, int8_t v) { return set(stringName, eTypeNumberInt8, (const_pointer)&v, sizeof(int8_t)); }
+   arguments& set( std::string_view stringName, uint8_t v) { return set(stringName, eTypeNumberUInt8, (const_pointer)&v, sizeof(uint8_t)); }
+   arguments& set( std::string_view stringName, int16_t v) { return set(stringName, eTypeNumberInt16, (const_pointer)&v, sizeof(int16_t)); }
+   arguments& set( std::string_view stringName, uint16_t v) { return set(stringName, eTypeNumberUInt16, (const_pointer)&v, sizeof(uint16_t)); }
+   arguments& set( std::string_view stringName, int32_t v) { return set(stringName, eTypeNumberInt32, (const_pointer)&v, sizeof(int32_t)); }
+   arguments& set( std::string_view stringName, uint32_t v) { return set(stringName, eTypeNumberUInt32, (const_pointer)&v, sizeof(uint32_t)); }
+   arguments& set( std::string_view stringName, int64_t v) { return set(stringName, eTypeNumberInt64, (const_pointer)&v, sizeof(int64_t)); }
+   arguments& set( std::string_view stringName, uint64_t v) { return set(stringName, eTypeNumberUInt64, (const_pointer)&v, sizeof(uint64_t)); }
+                   
+   arguments& set( std::string_view stringName, float v) { return set(stringName, eTypeNumberFloat, (const_pointer)&v, sizeof(float)); }
+   arguments& set( std::string_view stringName, double v) { return set(stringName, eTypeNumberDouble, (const_pointer)&v, sizeof(double)); }
 
-   arguments& set(const std::string_view& stringName, float v) { return set(stringName, eTypeNumberFloat, (const_pointer)&v, sizeof(float)); }
-   arguments& set(const std::string_view& stringName, double v) { return set(stringName, eTypeNumberDouble, (const_pointer)&v, sizeof(double)); }
-
-   arguments& set(const std::string_view& stringName, const char* v) { return set(stringName, std::string_view(v) ); }
-   arguments& set_uuid(const std::string_view& stringName, const uint8_t* puData) { return set(stringName, eTypeNumberGuid, (const_pointer)puData, 16); }
+   arguments& set( std::string_view stringName, const char* v) { return set(stringName, std::string_view(v) ); }
+   arguments& set_uuid(std::string_view stringName, const uint8_t* puData) { return set(stringName, eTypeNumberGuid, (const_pointer)puData, 16); }
 
 
    arguments& set(std::string_view stringName, std::string_view v, tag_string_view) { return set(stringName, (eTypeNumberString | eValueLength), (const_pointer)v.data(), (unsigned int)v.length() + 1); }
@@ -1853,37 +1853,37 @@ inline arguments& arguments::append( const std::vector<gd::variant_view>& vector
 
 /// append values from vector with pairs of string_view items
 inline arguments& arguments::append( const std::vector<std::pair<std::string_view, std::string_view>>& vectorStringValue ) {
-   for( auto it : vectorStringValue ) append( it.first, it.second );
+   for( const auto& it : vectorStringValue ) append( it.first, it.second );
    return *this;
 }
 
 /// append values from vector with pairs of string items
 inline arguments& arguments::append( const std::vector<std::pair<std::string, std::string>>& vectorStringValue ) {
-   for( auto it : vectorStringValue ) append( it.first, it.second );
+   for( const auto& it : vectorStringValue ) append( it.first, it.second );
    return *this;
 }
 
 /// append values from vector with variant items
 inline arguments& arguments::append( const std::vector<std::pair<std::string,gd::variant>>& vectorStringVariant ) {
-   for( auto it : vectorStringVariant ) append_argument( it.first, it.second );
+   for( const auto& it : vectorStringVariant ) append_argument( it.first, it.second );
    return *this;
 }
 
 /// append values from vector with pair of string_view and variant_view items
 inline arguments& arguments::append(const std::vector< std::pair<std::string_view, gd::variant_view> >& vectorStringVariantView ) {
-   for( auto it : vectorStringVariantView ) append_argument(it.first, it.second);
+   for( const auto& it : vectorStringVariantView ) append_argument(it.first, it.second);
    return *this;
 }
 
 
 /// append values from vector with variant items
 inline arguments& arguments::append( const std::vector<std::pair<std::string_view,std::string_view>>& vectorStringValue, tag_parse_type ) {
-   for( auto it : vectorStringValue ) append_argument( it.first, it.second, tag_parse_type{} );
+   for( const auto& it : vectorStringValue ) append_argument( it.first, it.second, tag_parse_type{} );
    return *this;
 }
 
 inline arguments& arguments::append( const std::vector<std::pair<std::string,std::string>>& vectorStringValue, tag_parse_type ) {
-   for( auto it : vectorStringValue ) append_argument( it.first, it.second, tag_parse_type{} );
+   for( const auto& it : vectorStringValue ) append_argument( it.first, it.second, tag_parse_type{} );
    return *this;
 }
 

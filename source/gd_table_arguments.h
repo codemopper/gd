@@ -488,7 +488,7 @@ public:
    bool column_is_reference( unsigned uIndex ) const { return m_pcolumns->is_reference( uIndex ); }
    
    bool column_validate_type( unsigned uIndex, gd::variant_view v_ ) const { return m_pcolumns->ctype_number( uIndex ) == v_.type_number(); }
-   bool column_validate_size( unsigned uIndex, gd::variant_view v_ ) const { return m_pcolumns->size( uIndex ) >= v_.length_in_bytes(); }
+   bool column_validate_size( unsigned uIndex, gd::variant_view v_ ) const { return m_pcolumns->size( uIndex ) >= v_.clength_in_bytes(); }
 
    /// Rename column
    std::string column_rename( unsigned uColumn, const std::string_view& stringNewName );
@@ -827,6 +827,10 @@ public:
    int64_t find( const std::vector<gd::variant_view>& vectorFind ) const { return find( 0, get_row_count(), vectorFind ); }
    int64_t find( uint64_t uStartRow, uint64_t uCount, const std::vector< std::pair<std::string_view, gd::variant_view> >& vectorFind ) const;
    int64_t find( const std::vector< std::pair<std::string_view, gd::variant_view> >& vectorFind ) const { return find( 0, get_row_count(), vectorFind ); }
+   
+   int64_t find(uint64_t uStartRow, uint64_t uCount, const gd::argument::arguments& argumentsFind) const;
+   int64_t find(const gd::argument::arguments& argumentsFind) const { return find(0, get_row_count(), argumentsFind); }
+
 
    /// Find first row marked as free (flag `eRowStateUse` is not used)
    int64_t find_first_free_row( uint64_t uStartRow ) const;

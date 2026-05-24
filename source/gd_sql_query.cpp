@@ -272,12 +272,14 @@ query::field* query::field_add_as_orderby( const gd::variant_view& variantTable,
 {
    auto ptable = table_get(variantTable);                                                          assert(ptable != nullptr);
 
-   field fieldAdd( *ptable, eSqlPartOrderBy );                                 // create field object that is added to query
+   field fieldAdd( *ptable, eSqlPartOrderBy );                                // create field object that is added to query
 
-   fieldAdd.append_argument("index", variantviewField);                        // add order index
+   fieldAdd.append_argument("order", variantviewField);
+   //fieldAdd.append_argument("index", variantviewField);                       // add order index
 
-   m_vectorField.push_back(std::move(fieldAdd));                               // add to list with fields
-   return &m_vectorField.back();                                               // return pointer to added field
+   m_uAddedPartType |= eSqlPartOrderBy;                                       // mark that order by part is added to query
+   m_vectorField.push_back(std::move(fieldAdd));                              // add to list with fields
+   return &m_vectorField.back();                                              // return pointer to added field
 }
 
 
@@ -692,7 +694,7 @@ query& query::add( std::string_view stringField, gd::variant_view variantviewVal
          arguments_.append( "condition", stringField );
          arguments_.append_argument( "value", variantviewValue );
       break;
-      default:
+      //default:  break;
       }
    }
 
@@ -760,6 +762,7 @@ void query::set_limit( std::size_t uOffset, std::size_t uCount )
       break;
    }
 
+   m_uAddedPartType |= eSqlPartLimit;                                         // mark that limit part is added to query
    m_argumentsAttribute.set( "limit", stringLimit );
 }
 
@@ -1475,6 +1478,14 @@ std::string query::sql_get_orderby( std::string_view stringOrderByPrefix ) const
       {
          stringOrderBy += ' ';
          stringOrderBy += order_.as_string_view();
+      }
+      else if( order_.is_integer() == true )                                  // if order is integer
+      {
+         int32_t iOrderIndex = order_.cast_as_int32();
+         int32_t iOrderIndexAbs = iOrderIndex >= 0 ? iOrderIndex : -iOrderIndex; // add absolut value of order index
+         stringOrderBy += std::to_string( iOrderIndexAbs );
+         if( iOrderIndex >= 0 ) stringOrderBy += std::string_view{ " ASC" };
+         else stringOrderBy += std::string_view{ " DESC" };
       }
       else
       {
@@ -2835,7 +2846,7 @@ std::pair<bool, std::string> query::validate_field_s( const gd::argument::argume
 /// validate keys used in condition, "name", "value", "value_hi", "raw", "join", "type", "operator", "group", "sql"
 std::pair<bool, std::string> query::validate_condition_s( const gd::argument::arguments& argumentsCondition )
 {
-   static constexpr std::array<std::string_view, 10> arrayValid = { "table", "name", "value", "value_hi", "raw", "join", "type", "operator", "group", "sql" };
+   static constexpr std::array<std::string_view, 11> arrayValid = { "table", "name", "meta", "value", "value_hi", "raw", "join", "type", "operator", "group", "sql" };
    std::vector<std::string_view> keys_ = argumentsCondition.get_keys();
 
    // ## validate condition keys

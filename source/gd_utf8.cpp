@@ -1,3 +1,5 @@
+// @FILE [tag: utf8] [description: Handle utf-8 encoding and decoding, and related operations] [type: source] [name: gd_utf8.cpp]
+
 #include <cassert>
 #include <stdint.h>
 #include <stdexcept>
@@ -1109,7 +1111,7 @@ namespace gd {
 
 
 
-      /// 
+      /// precalculated digits for itoa and utoa, this is used to convert two digits at once, this is faster than converting one by one
       static const uint8_t puDigits_s[200] = {
          '0','0','0','1','0','2','0','3','0','4','0','5','0','6','0','7','0','8','0','9',          // 000 - 019
          '1','0','1','1','1','2','1','3','1','4','1','5','1','6','1','7','1','8','1','9',          // 020 - 039
@@ -1123,7 +1125,7 @@ namespace gd {
          '9','0','9','1','9','2','9','3','9','4','9','5','9','6','9','7','9','8','9','9'           // 180 - 199
       };
 
-      /**
+      /** ------------------------------------------------------------------- itoa
        * @brief convert integer to text
        * Numbers are placed in buffer as text
        * @param iNumber integer number converted to text
@@ -1141,7 +1143,7 @@ namespace gd {
          return utoa( uNumber, pbszTo );                                      // convert number
       }
 
-      /**
+      /** ------------------------------------------------------------------- utoa
        * @brief convert unsigned integer to text
        * Numbers are placed in buffer as text
        * @param uNumber unsigned integer number converted to text
@@ -2768,45 +2770,6 @@ namespace gd {
    }
 } // gd
 
-
-
-
-
-/*
-
-    template <typename octet_iterator>
-    inline typename std::iterator_traits<octet_iterator>::difference_type
-    sequence_length(octet_iterator lead_it)
-    {
-        uint8_t lead = utf8::internal::mask8(*lead_it);
-        if (lead < 0x80)
-            return 1;
-        else if ((lead >> 5) == 0x6)
-            return 2;
-        else if ((lead >> 4) == 0xe)
-            return 3;
-        else if ((lead >> 3) == 0x1e)
-            return 4;
-        else
-            return 0;
-    }
-
-
-size_t utf8codepointsize(utf8_int32_t chr) {
-  if (0 == ((utf8_int32_t)0xffffff80 & chr)) {
-    return 1;
-  } else if (0 == ((utf8_int32_t)0xfffff800 & chr)) {
-    return 2;
-  } else if (0 == ((utf8_int32_t)0xffff0000 & chr)) {
-    return 3;
-  } else { // if (0 == ((int)0xffe00000 & chr)) {
-    return 4;
-  }
-}
-
-
-
-*/
 
 namespace gd {
    namespace utf8 {

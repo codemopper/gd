@@ -73,6 +73,9 @@ variant::variant( std::string_view stringJson, bool* pbSucceeded, gd::types::tag
    case eTypeBool:
       m_V.b = stringJson == "true";
       break;
+   case eTypeInt64:
+      m_V.int64 = std::stoll( std::string( stringJson ) );
+      break;
    case eTypeCDouble:
       m_V.d = std::stod( std::string( stringJson ) );
       break;
@@ -558,7 +561,7 @@ stringType = gd::types::type_name_g( variantTest.type() ); std::cout << stringTy
 bool variant::convert( const std::string_view& stringType )
 {
    auto eType = gd::types::type_g( stringType );
-   if( eType == eTypeUnknown ) return false;
+   if( eType == 0 ) return false;                                             // 0 is always eTypeUnknown, so if type_g returns 0 it means that type is not recognized
    convert( (variant_type::enumType)eType );
 
    return true;
