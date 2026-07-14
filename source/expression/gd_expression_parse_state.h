@@ -130,6 +130,7 @@ public:
       eStateNumberBlockComment,     ///< block comment state
       eStateNumberRawString,        ///< raw string state
       eStateNumberScriptCode,       ///< script that differs from the rest
+      eStateNumberExpression,       ///< expression state
 
       // States for plain text parsing can be added here
       eStateNumberText,             ///< plain text state
@@ -170,13 +171,14 @@ public:
       eStateBlockComment  = eStateNumberBlockComment  | eGroupComment,    ///< block comment state
       eStateRawString     = eStateNumberRawString     | eGroupString,     ///< raw string state
       eStateScriptCode    = eStateNumberScriptCode    | eGroupOutside,    ///< script that differs from the rest
+      eStateExpression    = eStateNumberExpression    | eGroupOutside,    ///< expression state
 
 	  // States for plain text parsing can be added here
       eStateText          = eStateNumberText          | eGroupOutside,    ///< plain text state
       eStateHeading       = eStateNumberHeading       | eGroupOutside,    ///< heading state 
       eStateTable         = eStateNumberTable         | eGroupOutside,    ///< table state
       eStateSummary       = eStateNumberSummary       | eGroupOutside,    ///< summary state
-	  eStateConfiguration = eStateNumberConfiguration | eGroupOutside,    ///< configuration state
+	   eStateConfiguration = eStateNumberConfiguration | eGroupOutside,    ///< configuration state
    };
 
 
@@ -345,6 +347,8 @@ public:
    int get_rule_index(const char* piText) const;
    const std::array<uint8_t, 256>& get_marker_hint() const { return m_arrayMarkerHint; } ///< get marker hint
    const rule& get_rule(size_t uIndex) const { assert(uIndex < m_vectorRule.size()); return m_vectorRule[uIndex]; } ///< get rule at index
+   const rule& get_active_rule() const { assert(m_iActive != -1); return m_vectorRule[m_iActive]; } ///< get active rule
+   const rule* get_active_rule_pointer() const { return (m_iActive != -1) ? &m_vectorRule[m_iActive] : nullptr; } ///< get pointer to active rule, this will return nullptr if not in state
 
    bool is_string() const { return get_state() & eGroupString; } ///< check if rule is string
    bool is_comment() const { return get_state() & eGroupComment; } ///< check if rule is comment
@@ -450,6 +454,7 @@ public:
        if(stringName == "BLOCKCOMMENT")  return eStateBlockComment;
        if(stringName == "RAWSTRING" )    return eStateRawString;
        if(stringName == "SCRIPTCODE")    return eStateScriptCode;
+       if(stringName == "EXPRESSION")    return eStateExpression;
        return eStateNone; // Default case for invalid input
    }
 
@@ -470,6 +475,7 @@ public:
       case eStateBlockComment:  return "BLOCKCOMMENT";
       case eStateRawString:     return "RAWSTRING";
       case eStateScriptCode:    return "SCRIPTCODE";
+      case eStateExpression:    return "EXPRESSION";
       }
       return "NONE"; // Default case for invalid input
    }
@@ -501,6 +507,7 @@ public:
       case eStateBlockComment:  return "BLOCKCOMMENT";
       case eStateRawString:     return "RAWSTRING";
       case eStateScriptCode:    return "SCRIPTCODE";
+      case eStateExpression:    return "EXPRESSION";
       }
       return "NONE"; // Default case for invalid input
    }
