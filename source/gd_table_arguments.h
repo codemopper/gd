@@ -643,7 +643,7 @@ public:
    /// clears all rows in table
    ///@{
    /// Clears all rows in table (just set the row count to 0)
-   void row_clear() { m_uRowCount = 0; }
+   void row_clear();
    ///@}
 
     /// @name row_delete
@@ -772,11 +772,16 @@ public:
    void cell_set_null( uint64_t uRow, const std::string_view& stringName );
    void cell_set_not_null( uint64_t uRow, unsigned uColumn );
    void cell_set( uint64_t uRow, unsigned uColumn, const gd::variant_view& variantviewValue, tag_convert );
+
    void cell_set( uint64_t uRow, const std::string_view& stringName, const gd::variant_view& variantviewValue, tag_convert );
    void cell_set( uint64_t uRow, const std::string_view& stringAlias, const gd::variant_view& variantviewValue, tag_convert, tag_alias );
    void cell_set( uint64_t uRow, unsigned uColumn, const gd::variant_view& variantviewValue, tag_spill );
    void cell_set( uint64_t uRow, std::string_view stringName, const gd::variant_view& variantviewValue, tag_spill );
    void cell_set( uint64_t uRow, std::string_view stringName, const gd::variant_view& variantviewValue, tag_spill, tag_convert );
+
+   void cell_set( uint64_t uRow, unsigned uColumn, gd::variant_view variantviewValue, tag_adjust);
+   void cell_set (uint64_t uRow, std::string_view stringName, gd::variant_view variantviewValue, tag_adjust);
+
    void cell_set( uint64_t uRow, unsigned uColumn, const std::vector<gd::variant_view>& vectorValue );
    void cell_set( uint64_t uRow, unsigned uColumn, const std::vector<gd::variant_view>& vectorValue, tag_convert );
    void cell_set( uint64_t uRow, const std::string_view& stringName, const std::vector<gd::variant_view>& vectorValue ) { cell_set( uRow, column_get_index(stringName), vectorValue ); }
@@ -1299,7 +1304,7 @@ inline uint8_t* table::row_get_arguments_meta( uint64_t uRow ) const noexcept { 
  */
 inline void table::row_set_arguments_meta_null( uint64_t uRow ) noexcept {                         assert( uRow < m_uReservedRowCount ); assert( is_rowarguments() == true );
    gd::argument::shared::arguments* parguments_ = row_find_arguments_pointer( uRow );
-   *(intptr_t*)parguments_= 0; // set arguments pointer to null
+   if(parguments_ != nullptr) { *(intptr_t*)parguments_ = 0; } // set arguments pointer to null
 }
 
 

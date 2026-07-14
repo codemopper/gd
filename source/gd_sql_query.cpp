@@ -290,10 +290,10 @@ query::field* query::field_add_as_orderby( const gd::variant_view& variantTable,
  * \param variantValue condition value
  * \return condition* pointer to added condition
  */
-gd::sql::query::condition* query::condition_add(std::string_view stringName, const gd::variant_view& variantOperator, const gd::variant_view& variantValue)
+gd::sql::query::condition* query::condition_add(std::string_view stringName, const gd::variant_view& variantOperator, const gd::variant_view& variantValue, uint32_t uType)
 {                                                                                                  assert( m_vectorTable.empty() == false );
    auto ptable = table_get();                                                                      assert(ptable != nullptr);
-   return condition_add_(ptable, stringName, variantOperator, variantValue);
+   return condition_add_(ptable, stringName, variantOperator, variantValue, uType);
 }
 
 
@@ -305,10 +305,10 @@ gd::sql::query::condition* query::condition_add(std::string_view stringName, con
  * \param variantValue condition value
  * \return condition* pointer to added condition
  */
-gd::sql::query::condition* query::condition_add(const gd::variant_view& variantTable, std::string_view stringName, const gd::variant_view& variantOperator, const gd::variant_view& variantValue)
+gd::sql::query::condition* query::condition_add(const gd::variant_view& variantTable, std::string_view stringName, const gd::variant_view& variantOperator, const gd::variant_view& variantValue, uint32_t uType)
 {
    auto ptable = table_get(variantTable);                                                          assert(ptable != nullptr);
-   return condition_add_(ptable, stringName, variantOperator, variantValue);
+   return condition_add_(ptable, stringName, variantOperator, variantValue, uType);
 }
 
 /*----------------------------------------------------------------------------- condition_add */ /**
@@ -387,7 +387,7 @@ gd::sql::query::condition* query::condition_add( unsigned uTableKey, const gd::a
  * \param variantValue condition value
  * \return condition* pointer to added condition
  */
-gd::sql::query::condition* query::condition_add_(const table* ptable, std::string_view stringName, const gd::variant_view& variantOperator, const gd::variant_view& variantValue)
+gd::sql::query::condition* query::condition_add_(const table* ptable, std::string_view stringName, const gd::variant_view& variantOperator, const gd::variant_view& variantValue, uint32_t uType)
 {                                                                                                  assert( ptable != nullptr );
    condition conditionAdd(*ptable);                                            // create condition object that is added to query
    conditionAdd.append("name", stringName);
@@ -396,6 +396,7 @@ gd::sql::query::condition* query::condition_add_(const table* ptable, std::strin
    if( variantOperator.is_null() == false ) { eOperator = get_where_operator_number_s( variantOperator ); assert( eOperator != eOperatorError ); } 
    conditionAdd.append("operator", eOperator);
    if( variantValue.is_null() == false ) conditionAdd.append_argument("value", variantValue);
+   if( uType != 0 ) conditionAdd.append("type", uType);
 
    m_vectorCondition.push_back(std::move(conditionAdd));                       // add to list with fields
    return &m_vectorCondition.back();                                           // return pointer to added condition
@@ -418,6 +419,20 @@ query::condition* query::condition_add_raw( const gd::variant_view& variantTable
    return &m_vectorCondition.back();                                           // return pointer to added condition
 }
 
+/** --------------------------------------------------------------------------
+ * @brief Get all values for a specific condition name
+ * @param stringName The name of the condition to search for
+ * @return A vector of `gd::variant_view` containing the values of all conditions that match the specified name
+ */
+std::vector<gd::variant_view> query::condition_get_values(std::string_view stringName) const
+{
+   std::vector<gd::variant_view> vectorValue;
+   for (const auto& condition_ : m_vectorCondition)
+   {
+      if(condition_.name() == stringName) { vectorValue.push_back(condition_.value()); }
+   }
+   return vectorValue;
+}
 
 /*----------------------------------------------------------------------------- condition_add */ /**
  * Add condition to query
@@ -1091,10 +1106,14 @@ std::string query::sql_get_update_from_after() const
    return stringFrom;
 }
 
-
-/*----------------------------------------------------------------------------- sql_get_where */ /**
- * Build "WHERE" text from conditions added to query
- * \return std::string
+/** -------------------------------------------------------------------------- sql_get_where
+ * @brief Build the SQL `WHERE` clause from the query conditions
+ *
+ * Conditions are emitted in order and joined with `AND`. Repeated equality
+ * and inequality comparisons for the same field are collapsed into `IN`
+ * and `NOT IN` expressions when possible.
+ *
+ * @return std::string Generated `WHERE` clause text
  */
 std::string query::sql_get_where() const
 {
@@ -1148,7 +1167,7 @@ std::string query::sql_get_where() const
                vectorCondition.push_back(&(*itCondition));
                for( auto it : vectorIndex ) { vectorCondition.push_back(&m_vectorCondition[it]); }
 
-               print_condition_values_s( vectorCondition, stringWhere );       // print condition values that is added to where text
+               print_condition_values_s( vectorCondition, m_eSqlDialect, stringWhere ); // print condition values that is added to where text
                
                stringWhere += ')';
                
@@ -2107,6 +2126,7 @@ std::pair<bool, std::string> query::sql_format( std::string_view stringTemplate,
       pit++;
       bool bRaw = false;         // {=name} raw insert, no escaping, no quotes
       bool bRequired = false;    // {*name} required value
+      bool bArray = false;       // {name[]} is array, if value is array then look for multiple values and append them as comma separated values, if value is not array then treat as single value
       bool bClause   = false;    // {+name} clause injection, clause means complete sql parts like, select, where etc
       bool bClauseWithKeyword = false; // {++name} or {+=name} clause injection with keyword
 
@@ -2137,6 +2157,9 @@ std::pair<bool, std::string> query::sql_format( std::string_view stringTemplate,
       {
          stringName = stringPlaceholder;
          stringFormat.clear();
+
+         // ## check for array suffix '[]' ...................................
+         if( stringName.length() > 2 && stringName.substr( stringName.length() - 2 ) == "[]" ) { bArray = true; stringName = stringName.substr( 0, stringName.length() - 2 ); }
       }
       else
       {
@@ -2149,6 +2172,28 @@ std::pair<bool, std::string> query::sql_format( std::string_view stringTemplate,
       std::string_view stringValue;
       bool bValueFound = false;
 
+      if(bArray == true)
+      {
+         const condition* pCondition = condition_get(stringName);
+         if(pCondition != nullptr)
+         {
+            unsigned uType = pCondition->type();
+            std::vector<gd::variant_view> vectorValue = condition_get_values(stringName);
+            bool bFirst = true;
+            for(const auto& value_ : vectorValue)
+            {
+               if(bFirst == true) bFirst = false;
+               else               stringSql += ", ";
+
+               if(bRaw == false) append_g(value_, uType, get_dialect(), stringSql, gd::types::tag_view{}); // format value for sql
+               else              append_g(value_, stringSql, gd::sql::tag_raw{}); // raw value, no formatting
+            }
+         }
+         else if(bRequired == true) { stringSql += '{'; stringSql += stringPlaceholder; stringSql += '}'; } // required: keep placeholder
+
+         continue; // @TODO: array handling is not implemented in this snippet, skip for now
+      }
+
       // ### positional index into pargumentsValues
       if( stringName.empty() == false && gd::types::is_ctype_g( stringName[0], "digit"_ctype ) ) // check for number
       {
@@ -2158,8 +2203,8 @@ std::pair<bool, std::string> query::sql_format( std::string_view stringTemplate,
             auto variantviewFound = (*pargumentsValues)[uIndex].as_variant_view();
             if( variantviewFound.is_null() == false )
             {
-               if( bRaw == false ) append_g( variantviewFound, 0u, get_dialect(), stringSql, gd::types::tag_view{} );
-               else                append_g( variantviewFound, stringSql, gd::sql::tag_raw{} );
+               if( bRaw == false ) append_g( variantviewFound, 0u, get_dialect(), stringSql, gd::types::tag_view{} ); // format value for sql
+               else                append_g( variantviewFound, stringSql, gd::sql::tag_raw{} ); // raw value, no formatting
                uArgumentIndex = uIndex + 1;
             }
             else if( bRequired == true ) { stringSql += '{'; stringSql += stringPlaceholder; stringSql += '}'; }
@@ -2412,6 +2457,7 @@ std::string_view set_text(char* pbBuffer, const std::string_view& stringAdd)
 {
    memcpy( pbBuffer, stringAdd.data(), stringAdd.length() + 1 );
    return std::string_view(pbBuffer, stringAdd.length());
+
 }
 }
 
@@ -2472,12 +2518,27 @@ void query::print_condition_values_s( const std::vector<const condition*>& vecto
    unsigned uCount = 0;
    for( auto it : vectorCondition )
    {
+      auto uType = it->type();
       if( uCount > 0 ) stringValues += std::string_view{ ", " };
       auto value_ = it->value();
       value_get_s( value_, stringValues);
       uCount++;
    }
 }
+
+void query::print_condition_values_s(const std::vector<const condition*>& vectorCondition, enumSqlDialect eDialect, std::string& stringValues)
+{
+   unsigned uCount = 0;
+   for(auto it : vectorCondition)
+   {
+      auto uType = it->type();
+      if(uCount > 0) stringValues += std::string_view{ ", " };
+      auto value_ = it->value();
+      append_g(value_, uType, eDialect, stringValues);
+      uCount++;
+   }
+}
+
 
 /** ---------------------------------------------------------------------------
  * @brief Variant value in is converted to string in a format that works for sql 
