@@ -610,7 +610,7 @@ table& table::column_add( const table* p_ )
  * @param stringName column name column index is returned for
  * @return int index to column for column name if found, -1 if not found
 */
-int table::column_find_index( const std::string_view& stringName ) const noexcept
+int table::column_find_index( std::string_view stringName ) const noexcept
 {
    for( auto it = m_pcolumns->begin(), itEnd = m_pcolumns->end(); it != itEnd; it++ )
    {
@@ -625,7 +625,7 @@ int table::column_find_index( const std::string_view& stringName ) const noexcep
  * @param stringAlias column alias column index is returned for
  * @return int index to column for column alias if foundm, -1 if not found
 */
-int table::column_find_index( const std::string_view& stringAlias, tag_alias ) const noexcept
+int table::column_find_index( std::string_view stringAlias, tag_alias ) const noexcept
 {
    for( auto it = m_pcolumns->begin(), itEnd = m_pcolumns->end(); it != itEnd; it++ )
    {
@@ -639,7 +639,7 @@ int table::column_find_index( const std::string_view& stringAlias, tag_alias ) c
  * @param stringWildcard wildcard name column index is returned for
  * @return int index to column for column name if found, -1 if not found
 */
-int table::column_find_index( const std::string_view& stringWildcard, tag_wildcard ) const noexcept
+int table::column_find_index( std::string_view stringWildcard, tag_wildcard ) const noexcept
 {
    for( auto it = m_pcolumns->begin(), itEnd = m_pcolumns->end(); it != itEnd; it++ )
    {
@@ -656,7 +656,7 @@ int table::column_find_index( const std::string_view& stringWildcard, tag_wildca
  * @param stringName column name column index is returned for
  * @return unsigned index to column for column name
 */
-unsigned table::column_get_index( const std::string_view& stringName ) const noexcept
+unsigned table::column_get_index( std::string_view stringName ) const noexcept
 {   
    int iIndex = column_find_index( stringName );                                                   assert( iIndex != -1 );
    return (unsigned)iIndex;
@@ -667,7 +667,7 @@ unsigned table::column_get_index( const std::string_view& stringName ) const noe
  * @param stringAlias column alias column index is returned for
  * @return unsigned index to column for column alias
 */
-unsigned table::column_get_index( const std::string_view& stringAlias, tag_alias ) const noexcept
+unsigned table::column_get_index( std::string_view stringAlias, tag_alias ) const noexcept
 {
    int iIndex = column_find_index( stringAlias, tag_alias{});                                      assert(iIndex != -1);
    return (unsigned)iIndex;
@@ -678,7 +678,7 @@ unsigned table::column_get_index( const std::string_view& stringAlias, tag_alias
  * @param stringWildcard column name column index is returned for
  * @return unsigned index to column for column name
 */
-unsigned table::column_get_index( const std::string_view& stringWildcard, tag_wildcard ) const noexcept
+unsigned table::column_get_index( std::string_view stringWildcard, tag_wildcard ) const noexcept
 {
    int iIndex = column_find_index( stringWildcard, tag_wildcard{});                                assert(iIndex != -1);
    return (unsigned)iIndex;
@@ -1141,28 +1141,6 @@ bool table::row_add(const unsigned* puColumn, std::string_view& stringRowValue, 
 }
 
 /** ---------------------------------------------------------------------------
- * @brief Add values from arguments object where names in arguments match column names
- * @param argumentsRow values added to row
-*/
-void table::row_set( uint64_t uRow, const gd::argument::arguments& argumentsRow, tag_arguments )
-{                                                                                                  assert( empty( tag_raw{} ) == false);
-   for( auto pPosition = argumentsRow.next(); pPosition != nullptr; pPosition = argumentsRow.next(pPosition) )
-   {
-      if( gd::argument::arguments::is_name_s(pPosition) == true )
-      {
-         auto stringName = gd::argument::arguments::get_name_s( pPosition );
-         auto value_ = gd::argument::arguments::get_argument_s( pPosition ).as_variant_view();
-
-         int iIndex = column_find_index( stringName );
-         if( iIndex != -1 )
-         {
-            cell_set( uRow, iIndex, value_ );
-         }
-      }
-   }
-}
-
-/** ---------------------------------------------------------------------------
  * @brief Set row values
  * @param uRow row where values are set
  * @param listValue list of values inserted to specified row
@@ -1314,7 +1292,7 @@ void table::row_set( uint64_t uRow, const std::vector< std::pair<unsigned, gd::v
 /** ---------------------------------------------------------------------------
  * @brief set row values
  * @param vectorValue vector with pair values set to row, first is column name and second is value
-*/
+ */
 void table::row_set( uint64_t uRow, const std::vector< std::pair<std::string_view, gd::variant_view> >& vectorValue )
 {                                                                                                  assert( uRow < m_uRowCount );
    for( auto it = std::begin( vectorValue ), itEnd = std::end( vectorValue ); it != itEnd; it++ )
@@ -1327,7 +1305,7 @@ void table::row_set( uint64_t uRow, const std::vector< std::pair<std::string_vie
 /** ---------------------------------------------------------------------------
  * @brief set row values, convert to right type if value type differ from column
  * @param vectorValue vector with pair values set to row, first is column name and second is value
-*/
+ */
 void table::row_set( uint64_t uRow, const std::vector< std::pair<std::string_view, gd::variant_view> >& vectorValue, tag_convert )
 {                                                                                                  assert( uRow < m_uRowCount );
    for( auto it = std::begin( vectorValue ), itEnd = std::end( vectorValue ); it != itEnd; it++ )
@@ -1336,6 +1314,29 @@ void table::row_set( uint64_t uRow, const std::vector< std::pair<std::string_vie
       if( iIndex != -1 ) cell_set( uRow, ( unsigned )iIndex, it->second, tag_convert{} );
    }
 }
+
+/** ---------------------------------------------------------------------------
+ * @brief Add values from arguments object where names in arguments match column names
+ * @param argumentsRow values added to row
+ */
+void table::row_set( uint64_t uRow, const gd::argument::arguments& argumentsRow, tag_arguments )
+{                                                                                                  assert( empty( tag_raw{} ) == false);
+   for( auto pPosition = argumentsRow.next(); pPosition != nullptr; pPosition = argumentsRow.next(pPosition) )
+   {
+      if( gd::argument::arguments::is_name_s(pPosition) == true )
+      {
+         auto stringName = gd::argument::arguments::get_name_s( pPosition );
+         auto value_ = gd::argument::arguments::get_argument_s( pPosition ).as_variant_view();
+
+         int iIndex = column_find_index( stringName );
+         if( iIndex != -1 )
+         {
+            cell_set( uRow, iIndex, value_ );
+         }
+      }
+   }
+}
+
 
 /** ---------------------------------------------------------------------------
  * @brief Set data taken from another row in table

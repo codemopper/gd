@@ -1,0 +1,1565 @@
+// @FILE [tag: table, simd] [description: Table that works well as data transfer object and to temporary storage] [type: header] [name: gd_table_simd.h]
+
+/**
+ * \file gd_table_simd.h
+ *
+ * @brief Table used to transfer/move data, Use `gd::table::simd::table` class that is optimized for data transfer.
+ * 
+ * ## table_base
+ *
+ | Area                | Methods (Examples)                                                                 | Description                                                                                   |
+ |---------------------|------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------|
+ | Construction        | table_column_buffer(...), common_construct(...)                                    | Constructors for various ways to create and copy table buffers, including from other tables.   |
+ | Column Management   | column_add(...), column_rename(...), column_exists(...), column_get_index(...)     | Methods for adding, renaming, finding, and managing columns and their metadata.                |
+ | Row Management      | row_add(...), row_set(...), row_get_variant_view(...), row_reserve_add(...)        | Methods for adding, setting, retrieving, and reserving rows and their values.                  |
+ | Cell Access         | cell_get(...), cell_set(...), cell_get_variant_view(...), cell_get_length(...)     | Methods for accessing and modifying individual cell values, including type conversion.         |
+ | Data Operations     | append(...), harvest(...), plant(...), swap(...), erase(...), split(...)           | Methods for copying, merging, splitting, swapping, and erasing data between tables.            |
+ | Searching/Sorting   | find(...), find_variant_view(...), sort(...), sort_null(...)                       | Methods for searching for values and sorting rows by column values, including null handling.   |
+ | Iteration/ForEach   | column_for_each(...), row_for_each(...)                                            | Methods for iterating over columns and rows with callback functions.                           |
+ | Debug/Printing      | debug::print(...), debug::print_row(...), debug::print_column(...)                 | Methods for printing table, row, and column information for debugging purposes.                |
+ | Utility/Meta        | clear(), count_used_rows(), count_free_rows(), column_match_s(...), to_columns(...)| Utility methods for clearing, counting, matching, and converting table/column metadata.        |
+ *
+ * `gd::table::simd::table<VALUESIZE, PACKCOUNT>` - fixed-layout, pack-oriented table built on `table_base`, sized for SIMD-friendly access.
+ * 
+ * ## table
+ *
+ | Area                | Methods (Examples)                                                                 | Description                                                                                   |
+ |---------------------|------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------|
+ | Pack Addressing     | rowpack_get(...), row_to_pack_s(...), get_row_pack_count(), row_add_pack(...)      | Locate a pack's base pointer/index; each pack holds PACKCOUNT rows of VALUESIZE bytes.        |
+ | Pack Access (span)  | pack_harvest_span(...), pack_get_span(...) [free fn]                              | Zero-copy `std::span<TYPE>` view directly over a pack's memory, for callers doing their own SIMD.|
+ | Pack Write          | pack_set_value(...), pack_set_values(...) [free fn], pack_broadcast_value(...), pack_plant(...), pack_plant_span(...) | Write a raw value, an array, or broadcast/fill a value across every element in a pack.         |
+ | Pack Read/Copy      | pack_harvest(...), pack_extract_iter(...)                                         | Copy a pack's values out into a range or output iterator.                                     |
+ | Pack Search/Filter  | pack_find_value(...), pack_find_value_if(...), pack_any(...), pack_find_first(...), pack_find_last(...), pack_extract_if(...), pack_extract_if_iter(...) | Search a pack for a value/predicate (bitmask, yes/no, or first/last index) or extract matching elements. |
+ | Pack Reductions     | pack_min(...), pack_max(...), pack_sum(...)                                       | Reduce a pack's elements to a single smallest/largest/summed value.                           |
+ | Element Get/Set     | get(...), set(...), get_uint8(...)..get_double(...), set_uint8(...)..set_double(...) | Typed single-value read/write at a `position` (row/column/offset), byte-aware across packs.   |
+ */
+
+#pragma once
+
+#include <array>
+#include <algorithm>
+#include <cassert>
+#include <functional>
+#include <memory>
+#include <string_view>
+#include <string>
+#include <tuple>
+#include <type_traits>
+#include <vector>
+
+#include "gd_arguments.h"
+#include "gd_table.h"
+#include "gd_table_column.h"
+#include "gd_types.h"
+#include "gd_variant_view.h"
+
+#if defined( __clang__ )
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wreorder-ctor"
+#pragma clang diagnostic ignored "-Wunused-variable"
+#pragma clang diagnostic ignored "-Wunused-but-set-variable"
+#elif defined( __GNUC__ )
+#pragma GCC diagnostic push
+#elif defined( _MSC_VER )
+#pragma warning(push)
+#pragma warning( disable : 26495 )
+#endif
+
+
+
+#ifndef _GD_TABLE_SIMD_BEGIN
+#  define _GD_TABLE_SIMD_BEGIN namespace gd { namespace table { namespace simd {
+#  define _GD_TABLE_SIMD_END } } }
+#endif
+
+_GD_TABLE_SIMD_BEGIN
+
+#if defined(__GNUC__) || defined(__clang__)
+    #define GD_RESTRICT __restrict__
+#elif defined(_MSC_VER)
+    #define GD_RESTRICT __restrict
+#else
+    #define GD_RESTRICT
+#endif
+
+class table_base
+{
+public:
+   /**
+    * \brief constant numbers used in table or items used in table
+    *
+    * ## Column states
+    * - eColumnStateLength: column value begins with length
+    * - eColumnStateReference: column value is stored in reference object
+    * - eColumnStateKey: column acts as key column
+    *
+    * ## Row states
+    * - eRowStateUse: row flag marking that row is in use
+    * - eRowStateDeleted: row flag marking that row is deleted
+    *
+    * ## Table flags
+    * - eTableFlagNull32: reserve 32 bit for each row to mark null for column if no value (max 32 columns)
+    * - eTableFlagNull64: reserve 64 bit for each row to mark null for column if no value (max 64 columns)
+    * - eTableFlagRowStatus: enable row status (if row is valid, modified, deleted)
+    * - eTableFlagDuplicateStrings: enable duplicate strings, strings are not checked for duplicates
+    *
+    * ## Size information
+    * - eSpaceNull32Columns: space marking null columns
+    * - eSpaceNull64Columns: space marking null columns
+    * - eSpaceRowState: space where row state data is placed
+    * - eSpaceRowGrowBy: default number of rows to grow by
+    * - eSpaceFirstAllocate: number of rows to allocate before any values is added
+    */                                                                        // ## @API [tag: constant] [description: constant values used in table]
+   enum
+   {
+      // ## column flags marking column states, how column behaves/works
+      eColumnStateLength = 0x01,                                              ///< column flag marking that value begins with length
+      eColumnStateReference = 0x02,                                           ///< column flag marking that value is stored in reference object
+      eColumnStateKey = 0x04,                                                 ///< column acts as key column
+
+      // ## row state flags
+      eRowStateUse = 0x01,                                                    ///< row flag marking that row is in use
+      eRowStateDeleted = 0x02,                                                ///< row flag marking that row is deleted
+
+      // ## table flags marking table states, how table behaves
+      eTableFlagNull32 = 0x0001,                                              ///< reserve 32 bit for each row to mark null for column if no value
+      eTableFlagNull64 = 0x0002,                                              ///< reserve 64 bit for each row to mark null for column if no value
+      eTableFlagRowStatus = 0x0004,                                           ///< enable row status (if row is valid, modified, deleted)
+      eTableFlagDuplicateStrings = 0x0008,                                    ///< enable duplicate strings, reference string are not checked for duplicates
+      eTableFlagMAX = 0x000f,                                                 ///< max flag value
+      eTableFlagMASK = 0x000f,                                                ///< mask for table state values
+
+      // ## size information used to calculate space needed by table
+      eSpaceNull32Columns = sizeof(uint32_t),                                 ///< space marking null columns
+      eSpaceNull64Columns = sizeof(uint64_t),                                 ///< space marking null columns
+      eSpaceRowState = sizeof(uint32_t),                                      ///< space where row state data is placed
+      eSpaceRowGrowBy = 10,                                                   ///< default number of rows to grow by
+      eSpaceFirstAllocate = 10,                                               ///< number of rows to allocate before any values is added
+   };
+
+public:
+   /**
+    * @brief iterator to move trough rows in table
+    */
+   struct iterator_row                                                        // ## @API [tag: iterator] [description: row iterator for table]
+   {
+      iterator_row(): m_uRow(0), m_ptable(nullptr) {}
+      iterator_row( uint64_t uRow, table_base* ptable ): m_uRow(uRow), m_ptable(ptable ) {}
+
+      auto operator*() const { return gd::table::row<table_base>( m_ptable, m_uRow ); }
+
+      bool operator==( const iterator_row& o ) const { assert( o.m_ptable == m_ptable ); return o.m_uRow == m_uRow; }
+      bool operator!=( const iterator_row& o ) const { assert( o.m_ptable == m_ptable ); return o.m_uRow != m_uRow; }
+
+      uint64_t get_row() const noexcept { return m_uRow; }
+      int64_t get_irow() const noexcept { return (int64_t)m_uRow; }
+
+      const uint8_t* get( tag_raw ) const { return m_ptable->row_get(m_uRow); }
+
+      iterator_row& operator++() { m_uRow++; return *this; }
+      iterator_row operator++(int) { iterator_row it_ = *this; ++(*this); return it_; }
+      iterator_row& operator--() { m_uRow--; return *this; }
+      iterator_row operator--(int) { iterator_row it_ = *this; --(*this); return it_; }
+
+      auto operator+( std::ptrdiff_t iDistance ) { return iterator_row( (std::ptrdiff_t)m_uRow + iDistance, m_ptable ); }
+      auto operator-( std::ptrdiff_t iDistance ) { return iterator_row( (std::ptrdiff_t)m_uRow - iDistance, m_ptable ); }
+
+      gd::variant_view cell_get_variant_view( unsigned uIndex ) const { return m_ptable->cell_get_variant_view( m_uRow, uIndex ); }
+      gd::variant_view cell_get_variant_view( const std::string_view& stringName ) const { return m_ptable->cell_get_variant_view( m_uRow, stringName ); }
+      std::vector< gd::variant_view > cell_get_variant_view() const { return m_ptable->cell_get_variant_view( m_uRow ); }
+      std::vector< gd::variant_view > get_variant_view( const std::vector<unsigned>& vectorColumn ) const { return m_ptable->row_get_variant_view( m_uRow, vectorColumn ); }
+
+      gd::argument::arguments get_arguments() const { return m_ptable->row_get_arguments( m_uRow ); } 
+      void get_arguments( gd::argument::arguments& argumentsRow ) const { m_ptable->row_get_arguments( m_uRow, argumentsRow ); }
+
+      void cell_set( unsigned uColumn, const gd::variant_view& variantviewValue ) { m_ptable->cell_set( m_uRow, uColumn, variantviewValue ); }
+      void cell_set( const std::string_view& stringName, const gd::variant_view& variantviewValue ) { m_ptable->cell_set( m_uRow, stringName, variantviewValue ); }
+      void cell_set( unsigned uColumn, const gd::variant_view& variantviewValue, tag_convert ) { m_ptable->cell_set( m_uRow, uColumn, variantviewValue, tag_convert{} ); }
+      void cell_set( const std::string_view& stringName, const gd::variant_view& variantviewValue, tag_convert ) { m_ptable->cell_set( m_uRow, stringName, variantviewValue, tag_convert{} ); }
+
+      uint64_t m_uRow;     ///< active row index
+      table_base* m_ptable; ///< pointer to table that owns the iterator
+   };
+
+   struct const_iterator_row
+   {
+      const_iterator_row(): m_uRow(0), m_ptable(nullptr) {}
+      const_iterator_row( uint64_t uRow, const table_base* ptable ): m_uRow(uRow), m_ptable(ptable) {}
+      const_iterator_row( int64_t iRow, const table_base* ptable ): m_uRow((uint64_t)iRow), m_ptable(ptable) {}
+
+      bool operator==( const const_iterator_row& o ) const { assert( o.m_ptable == m_ptable ); return o.m_uRow == m_uRow; }
+      bool operator!=( const const_iterator_row& o ) const { assert( o.m_ptable == m_ptable ); return o.m_uRow != m_uRow; }
+
+      uint64_t get_row() const noexcept { return m_uRow; }
+      int64_t get_irow() const noexcept { return (int64_t)m_uRow; }
+
+      const uint8_t* get( tag_raw ) const { return m_ptable->row_get(m_uRow); }
+
+      gd::variant_view cell_get_variant_view( unsigned uIndex ) const { return m_ptable->cell_get_variant_view( m_uRow, uIndex ); }
+      gd::variant_view cell_get_variant_view( const std::string_view& stringName ) const { return m_ptable->cell_get_variant_view( m_uRow, stringName ); }
+      std::vector< gd::variant_view > cell_get_variant_view() const { return m_ptable->cell_get_variant_view( m_uRow ); }
+      std::vector< gd::variant_view > get_variant_view( const std::vector<unsigned>& vectorColumn ) const { return m_ptable->row_get_variant_view( m_uRow, vectorColumn ); }
+
+      const_iterator_row& operator++() { m_uRow++; return *this; }
+      const_iterator_row operator++(int) { const_iterator_row it_ = *this; ++(*this); return it_; }
+      const_iterator_row& operator--() { m_uRow--; return *this; }
+      const_iterator_row operator--(int) { const_iterator_row it_ = *this; --(*this); return it_; }
+
+      const_iterator_row operator+( int64_t iDistance ) { return const_iterator_row( m_uRow + iDistance, m_ptable ); }
+      const_iterator_row operator-( int64_t iDistance ) { return const_iterator_row( m_uRow - iDistance, m_ptable ); }
+
+      uint64_t m_uRow;
+      const table_base* m_ptable;
+   };
+
+public:
+// @API [tag: stl, aliases] [description: simplify for templates using table data]
+
+   using column_value_type = detail::column;
+   using column_const_value_type = const detail::column;
+   using column_iterator = std::vector<detail::column>::iterator;
+   using column_const_iterator = std::vector<detail::column>::const_iterator;
+   typedef std::random_access_iterator_tag iterator_category;
+
+   using row_value_type = std::vector<gd::table::cell<table_base> >;  ///< used to simplify stl and containers working with table rows
+   using row_const_value_type = const std::vector<gd::table::cell<table_base> >;///< used to simplify stl and containers working with table rows
+   using row_iterator = iterator_row;
+   using row_const_iterator = const_iterator_row;
+   using row_difference_type = std::ptrdiff_t;
+
+   using value_type = row_value_type;
+   using const_value_type = row_const_value_type;
+   using iterator = iterator_row;
+   using const_iterator = const_iterator_row;
+   using difference_type = row_difference_type;
+
+
+
+public:
+
+// ## @API [tag: construct] [description: table construction, lots of constructors to simplify how to create new tables]
+public:
+   table_base() : m_uFlags(0), m_uRowSize(0), m_uRowCount(0), m_uPackCount(0), m_uRowGrowBy(0) {}
+   table_base(uint64_t uRowCount): m_uFlags(0), m_uRowSize(0), m_uRowCount(0), m_uRowReservedPackCount(uRowCount), m_uRowGrowBy(0) {}
+   table_base(uint64_t uRowCount, tag_repare_to_add_column) : m_uFlags(0), m_uRowSize(0), m_uRowCount(0), m_uRowReservedPackCount(uRowCount), m_uRowGrowBy(0) { column_prepare(); }
+   table_base(uint64_t uRowCount, unsigned uFlags) : m_uFlags(uFlags), m_uRowSize(0), m_uRowCount(0), m_uRowReservedPackCount(uRowCount), m_uRowGrowBy(0) { assert(m_uFlags < eTableFlagMAX); }
+   table_base(uint64_t uRowCount, unsigned uFlags, unsigned uGrowBy) : m_uFlags(uFlags), m_uRowSize(0), m_uRowCount(0), m_uRowReservedPackCount(uRowCount), m_uRowGrowBy(uGrowBy) { assert(m_uFlags < eTableFlagMAX); }
+   table_base(tag_null) : m_uFlags(eTableFlagNull64), m_uRowSize(0), m_uRowCount(0), m_uRowReservedPackCount(0) { assert(m_uFlags < eTableFlagMAX); }
+   table_base(tag_full_meta) : m_uFlags(eTableFlagNull64 | eTableFlagRowStatus), m_uRowSize(0), m_uRowCount(0), m_uRowReservedPackCount(0) { assert(m_uFlags < eTableFlagMAX); }
+
+   table_base(unsigned uFlags, const std::vector< std::tuple< std::string_view, unsigned, std::string_view > >& vectorValue);
+
+   table_base(gd::variant_view variantviewValue, tag_prepare, unsigned uValueSize, unsigned uPackCount);
+   table_base(const std::vector< std::string_view >& vectorValue, tag_prepare, unsigned uValueSize, unsigned uPackCount);
+   table_base(unsigned uFlags, const std::vector< std::tuple< std::string_view, std::string_view > >& vectorValue, tag_prepare, unsigned uValueSize, unsigned uPackCount);
+   table_base(unsigned uFlags, const std::vector< std::tuple< std::string_view, unsigned, std::string_view > >& vectorValue, tag_prepare, unsigned uValueSize, unsigned uPackCount);
+   table_base(const std::vector< std::tuple< std::string_view, unsigned, std::string_view, gd::variant_view > >& vectorValue, tag_prepare, unsigned uValueSize, unsigned uPackCount);
+
+   table_base(const table_base& o) : m_puData(nullptr) { common_construct(o); }
+   table_base(table_base&& o) noexcept : m_puData(nullptr) { common_construct(std::move(o)); }
+   table_base(detail::columns* pcolumns, unsigned uRowCount, unsigned uFlags, unsigned uGrowBy);
+
+
+   ~table_base() { clear(); }
+
+private:
+   // common copy
+   void common_construct(const table_base& o);
+   void common_construct(const table_base& o, tag_columns);
+   void common_construct(const table_base& o, tag_body);
+   void common_construct(table_base&& o) noexcept;
+   void common_construct(detail::columns* pcolumns);
+
+
+   // ## @API [tag: operator] [description: table operators]
+public:
+   std::vector<gd::variant_view> operator[](uint64_t uRow) const { return row_get_variant_view(uRow); }
+
+   //table& operator+=(const table& o) { append(o); return *this; }
+
+   gd::variant_view operator()(uint64_t uRow, unsigned uColumn) const { return cell_get_variant_view(uRow, uColumn); }
+   gd::variant_view operator()(uint64_t uRow, const std::string_view& stringName) const { return cell_get_variant_view(uRow, stringName); }
+
+   cell<table_base> operator[](const std::pair<uint64_t, unsigned>& pairCell) noexcept { return cell<table_base>(this, pairCell.first, pairCell.second); }
+   cell<table_base> operator[](const std::pair<uint64_t, unsigned>& pairCell) const noexcept { return cell<table_base>(const_cast<table_base*>(this), pairCell.first, pairCell.second); }
+   cell<table_base> operator[](const std::pair<uint64_t, std::string_view>& pairCell) noexcept {
+      auto column_ = column_get_index(pairCell.second);
+      return cell<table_base>(this, pairCell.first, column_);
+   }
+   cell<table_base> operator[](const std::pair<uint64_t, std::string_view>& pairCell) const noexcept {
+      auto column_ = column_get_index(pairCell.second);
+      return cell<table_base>(const_cast<table_base*>(this), pairCell.first, column_);
+   }
+
+#if defined( GD_COMPILER_HAS_CPP23_SUPPORT )
+   // ## multidimensional subscript operator used to access or set cell values in table, it is used like table( row, column ) or table( row, "column_name" )
+   cell<table_base> operator[](uint64_t uRow, unsigned uColumn) noexcept { return cell<table_base>(this, uRow, uColumn); }
+   cell<table_base> operator[](uint64_t uRow, unsigned uColumn) const noexcept { return cell<table_base>(const_cast<table_base*>(this), uRow, uColumn); }
+
+   cell<table_base> operator[](uint64_t uRow, std::string_view stringColumnName) noexcept {
+      auto column_ = column_get_index(stringColumnName);
+      return cell<table_base>(this, uRow, column_);
+   }
+   cell<table_base> operator[](uint64_t uRow, std::string_view stringColumnName) const noexcept {
+      auto column_ = column_get_index(stringColumnName);
+      return cell<table_base>(const_cast<table_base*>(this), uRow, column_);
+   }
+#endif   
+
+
+   // ## methods ------------------------------------------------------------------
+public:
+// @API [tag: getter, setter] [description: getters and setters]
+   unsigned get_flags() const noexcept { return m_uFlags; }
+   void set_state [[deprecated]] (uint32_t uFlags) noexcept { m_uFlags = uFlags; }
+   void set_flags(uint32_t uFlags) noexcept { m_uFlags = uFlags; }
+   void set_state [[deprecated]] (tag_full_meta) noexcept { m_uFlags = eTableFlagRowStatus | eTableFlagNull64; }
+   void set_flags(tag_full_meta) noexcept { m_uFlags = eTableFlagRowStatus | eTableFlagNull64; }
+   void set_flags(uint32_t uSet, uint32_t uClear) noexcept { m_uFlags |= uSet; m_uFlags &= ~uClear; }
+   unsigned get_column_count() const noexcept { return (unsigned)m_pcolumns->size(); }
+   /// get allocated size in bytes for table
+   uint64_t get_reserved_size() const noexcept { return (m_uRowReservedPackCount * m_uRowSize) + (m_uRowSize * size_row_meta()); }
+   /// Get number of rows with values
+   uint64_t get_row_count() const noexcept { return m_uRowCount; }
+   void set_reserved_row_count(uint64_t uCount) { assert(uCount >= m_uRowCount); m_uRowReservedPackCount = (uCount / size_pack() + 1); }
+   unsigned size_row() const noexcept { return m_uRowSize; }
+   unsigned size_row_meta() const noexcept;
+   /// get meta block size
+   uint64_t size_meta_total() const noexcept { return size_row_meta() * m_uRowReservedPackCount; }
+   /// get meta block size for rows
+   uint64_t size_meta_total(uint64_t uRowCount) const noexcept { return size_row_meta() * uRowCount; }
+   /// calc and return total allocated memory size
+   uint64_t size_reserved_total() const noexcept { return (m_uRowSize + size_row_meta()) * m_uRowReservedPackCount; }
+   /// calc and return total allocated memory size for rows
+   uint64_t size_reserved_total(uint64_t uRowCount) const noexcept { return (m_uRowSize * uRowCount) + (size_row_meta() * uRowCount); }
+   /// return pointer to internal columns object
+   detail::columns* get_columns() noexcept { return m_pcolumns; }
+   const detail::columns* get_columns() const noexcept { return m_pcolumns; }
+   void set_columns(detail::columns* pcolumns) { assert(m_pcolumns == nullptr); assert(pcolumns != nullptr); m_pcolumns = pcolumns; m_pcolumns->add_reference(); }
+
+// @API [tag: state] [description: state methods, check state flags]
+
+   bool is_null() const { return m_uFlags & (eTableFlagNull32 | eTableFlagNull64); }
+   bool is_null32() const { return m_uFlags & eTableFlagNull32; }
+   bool is_null64() const { return m_uFlags & eTableFlagNull64; }
+   bool is_rowstatus() const { return m_uFlags & eTableFlagRowStatus; }
+   bool is_duplicated_strings() const { return m_uFlags & eTableFlagDuplicateStrings; }
+   bool is_rowmeta() const { return m_puMetaData != nullptr; }
+
+
+
+   // ## @API [tag: column] [description: column management methods]
+
+/// prepare to store column information
+   void column_prepare() { if(m_pcolumns == nullptr) m_pcolumns = new_columns_s(); }
+
+   /// @name column_add
+   /// Add columns to table, this is typically done before adding values to table. Remember to call @see prepare before adding data
+   /// Parameters:
+   /// - `uColumnType` type of column to add @see: gd::types::enumType
+   /// - `stringType` type of columns as string name, will be converted to the type number
+   /// - `uSize` if type do not have a fixed size then size will have the maximum length for text
+   /// - `columnToAdd` has all column properties for column to add
+   /// - `stringName` name for column
+   /// - `stringAlias` alias name for column (column can have both name and alias)
+   ///@{
+   table_base& column_add(const detail::column& columnToAdd) { m_pcolumns->add(columnToAdd); return *this; }
+   table_base& column_add(unsigned uColumnType, const std::string_view& stringName) { return column_add(uColumnType, 0, stringName); }
+   table_base& column_add(unsigned uColumnType, unsigned uSize);
+   table_base& column_add(unsigned uColumnType, unsigned uSize, std::string_view stringName, std::string_view stringAlias);
+   table_base& column_add(unsigned uColumnType, unsigned uSize, std::string_view stringName) { return column_add(uColumnType, uSize, stringName, std::string_view{}); }
+   table_base& column_add(unsigned uColumnType, unsigned uSize, std::string_view stringAlias, tag_alias) { return column_add(uColumnType, uSize, std::string_view{}, stringAlias); }
+   table_base& column_add(const std::vector< std::tuple< unsigned, unsigned, std::string_view > >& vectorColumn);
+   table_base& column_add(std::string_view stringType) { return column_add(detail::column((unsigned)gd::types::type_g(stringType))); }
+   table_base& column_add(std::string_view stringType, std::string_view stringName) { return column_add((unsigned)gd::types::type_g(stringType), 0, stringName, std::string_view{}); }
+   table_base& column_add(std::string_view stringType, unsigned uSize) { return column_add((unsigned)gd::types::type_g(stringType), uSize); }
+   table_base& column_add(std::string_view stringType, unsigned uSize, std::string_view stringName) { return column_add((unsigned)gd::types::type_g(stringType), uSize, stringName, std::string_view{}); }
+   table_base& column_add(std::string_view stringType, unsigned uSize, std::string_view stringAlias, tag_alias) { return column_add((unsigned)gd::types::type_g(stringType), uSize, std::string_view{}, stringAlias); }
+   table_base& column_add(std::string_view stringType, unsigned uSize, std::string_view stringName, std::string_view stringAlias) { return column_add((unsigned)gd::types::type_g(stringType), uSize, stringName, stringAlias); }
+
+   table_base& column_add(const std::initializer_list<std::pair<std::string_view, unsigned>>& listType, tag_type_name);
+   table_base& column_add(const std::initializer_list<std::tuple<std::string_view, unsigned, std::string_view>>& listType, tag_type_name);
+
+   table_base& column_add(const std::vector< std::pair< std::string_view, unsigned > >& vectorType, tag_type_name);
+   table_base& column_add(const std::vector< std::tuple< std::string_view, unsigned, std::string_view > >& vectorType, tag_type_name);
+   table_base& column_add(const std::vector< std::tuple< std::string_view, unsigned, std::string_view, std::string_view > >& vectorType, tag_type_name);
+   table_base& column_add(const std::initializer_list< std::pair< std::string_view, std::string_view > >& vectorType, tag_type_name);
+   table_base& column_add(const std::vector< std::pair< std::string_view, std::string_view > >& vectorType, tag_type_name);
+   table_base& column_add(const std::vector< std::pair< unsigned, unsigned > >& vectorType, tag_type_constant);
+   table_base& column_add(const table_base* p_);
+   ///@}
+
+   /// @brief find column index for column name
+   int column_find_index(std::string_view stringName) const noexcept;
+   int column_find_index(std::string_view stringAlias, tag_alias) const noexcept;
+   /// @brief find column index for column name with wildcard, wildcars like ? and * are supported
+   int column_find_index(const std::string_view& stringWildcard, tag_wildcard) const noexcept;
+   /// @brief get column index for column name, asserts if not found
+   unsigned column_get_index(const std::string_view& stringName) const noexcept;
+   unsigned column_get_index(const std::string_view& stringAlias, tag_alias) const noexcept;
+   /// @brief get column index for column name with wildcard, wildcars like ? and * are supported, asserts if not found
+   unsigned column_get_index(const std::string_view& stringName, tag_wildcard) const noexcept;
+
+   auto column_begin() { return m_pcolumns->begin(); }
+   auto column_end() { return m_pcolumns->end(); }
+   auto column_begin() const { return m_pcolumns->begin(); }
+   auto column_end() const { return m_pcolumns->end(); }
+   auto column_cbegin() const { return m_pcolumns->cbegin(); }
+   auto column_cend() const { return m_pcolumns->cend(); }
+
+
+
+   std::pair<bool, std::string> prepare( unsigned uValueSize, unsigned uPackCount );
+   std::pair<bool, std::string> prepare() { return prepare(m_uValueSize, m_uPackCount); }
+
+   // ## @API [tag: row] [description: row management methods]
+
+   void row_set_state(uint64_t uRow, unsigned uFlags) { assert(uRow < count_reserved_row()); *row_get_state(uRow) = uFlags; }
+   void row_set_state(uint64_t uRow, unsigned uSet, unsigned uClear);
+   uint8_t* row_get_meta(uint64_t uRow) const noexcept { return row_get_null(uRow); }
+   /// return pointer to section holding null column information
+   uint8_t* row_get_null(uint64_t uRow) const noexcept;
+   /// Get pointer to row state part
+   uint32_t* row_get_state(uint64_t uRow) const noexcept;
+   /// if row is in used (when state information is used for row)
+   bool row_is_use(uint64_t uRow) const noexcept;
+   /// Get pointer to row part used to mark null columns
+   uint64_t* row_get_null_columns(uint64_t uRow) const noexcept { assert(uRow < count_reserved_row()); return reinterpret_cast<uint64_t*>(m_puData + uRow * m_uRowSize); }
+
+
+   uint8_t* row_get( uint64_t uRow ) const noexcept {                                              assert(m_uPackCount % 2 == 0 && "Pack size must be even");
+      uint64_t uMemoryRow = uRow / count_pack();                               // get memory row index, each row holds array of values, each array is called pack, each pack holds 4 or 8 rows
+      return m_puData + uMemoryRow * m_uRowSize; 
+   }
+
+   void row_get_arguments(uint64_t uRow, gd::argument::arguments& argumentsValue) const;
+   gd::argument::arguments row_get_arguments(uint64_t uRow) const { gd::argument::arguments a_; row_get_arguments(uRow, a_); return a_; }
+   gd::argument::arguments row_get_arguments(uint64_t uRow, const unsigned* puIndex, unsigned uSize) const;
+   gd::argument::arguments row_get_arguments(uint64_t uRow, const std::vector<unsigned>& vectorIndex) const { return row_get_arguments(uRow, vectorIndex.data(), (unsigned)vectorIndex.size()); }
+
+
+   std::vector<gd::variant_view> row_get_variant_view(uint64_t uRow) const;
+   std::vector<gd::variant_view> row_get_variant_view(uint64_t uRow, const unsigned* puIndex, unsigned uSize) const;
+   std::vector<gd::variant_view> row_get_variant_view(uint64_t uRow, const std::vector<unsigned>& vectorIndex) const { return row_get_variant_view(uRow, vectorIndex.data(), (unsigned)vectorIndex.size()); }
+   void row_get_variant_view(uint64_t uRow, std::vector<gd::variant_view>& vectorValue) const;
+   void row_get_variant_view(uint64_t uRow, unsigned uOffset, std::vector<gd::variant_view>& vectorValue) const;
+   void row_get_variant_view(uint64_t uRow, const unsigned* puIndex, unsigned uSize, std::vector<gd::variant_view>& vectorValue) const;
+   void row_get_variant_view(uint64_t uRow, const std::vector<unsigned>& vectorIndex, std::vector<gd::variant_view>& vectorValue) const { row_get_variant_view(uRow, vectorIndex.data(), (unsigned)vectorIndex.size(), vectorValue); }
+
+   void row_add(uint64_t uCount);
+   void row_add() { row_add(1); }
+   void row_add(uint64_t uCount, tag_null);
+   void row_add(tag_null) { row_add(1, tag_null{}); }
+   /// Simple add one row to table that is safe (if table have null values these are automatically set to null)
+   uint64_t row_add_one() { row_add(1); return m_uRowCount - 1; }
+
+   void row_add(const std::initializer_list<gd::variant_view>& vectorValue);
+   void row_add(const std::initializer_list<gd::variant_view>& vectorValue, tag_convert);
+   void row_add(const std::vector<gd::variant_view>& vectorValue);
+
+   void row_set(uint64_t uRow, const std::initializer_list<gd::variant_view>& listValue);
+   void row_set(uint64_t uRow, unsigned uSart, const std::initializer_list<gd::variant_view>& listValue);
+   void row_set(uint64_t uRow, const std::initializer_list<gd::variant_view>& listValue, tag_convert);
+   void row_set(uint64_t uRow, unsigned uSart, const std::initializer_list<gd::variant_view>& listValue, tag_convert);
+   void row_set(uint64_t uRow, const std::vector<gd::variant_view>& listValue);
+   void row_set(uint64_t uRow, const std::vector<gd::variant_view>& listValue, tag_convert);
+   void row_set(uint64_t uRow, const std::vector<gd::variant_view>& listValue, const std::vector<unsigned>& vectorColumn);
+   void row_set(uint64_t uRow, const std::vector<gd::variant_view>& listValue, const std::vector<unsigned>& vectorColumn, tag_convert);
+   void row_set(uint64_t uRow, const std::vector< std::pair<unsigned, gd::variant_view> >& vectorValue);
+   void row_set(uint64_t uRow, const std::vector< std::pair<unsigned, gd::variant_view> >& vectorValue, tag_convert);
+   void row_set(uint64_t uRow, const std::vector< std::pair<std::string_view, gd::variant_view> >& vectorValue);
+   void row_set(uint64_t uRow, const std::vector< std::pair<std::string_view, gd::variant_view> >& vectorValue, tag_convert);
+   void row_set(uint64_t uRow, const gd::argument::arguments& argumentsRow, tag_arguments);
+   void row_set(uint64_t uRow, uint64_t uRowToCopy);
+   void row_set(uint64_t uRow, const std::string_view& stringRowValue, char chSplit, tag_parse);
+   void row_set(uint64_t uRow, unsigned uFirst, const std::string_view& stringRowValue, char chSplit, tag_parse);
+   void row_set(uint64_t uRow, const unsigned* puColumn, const std::string_view& stringRowValue, char chSplit, tag_parse);
+   bool row_set(uint64_t uRow, unsigned uFirst, const std::string_view& stringRowValue, char chSplit, std::function< bool(std::vector<std::string>& vectorValue)> callback_, tag_parse);
+   bool row_set(uint64_t uRow, const unsigned* puColumn, const std::string_view& stringRowValue, char chSplit, std::function< bool(std::vector<std::string>& vectorValue)> callback_, tag_parse);
+
+   /// set raw data in row, use with care because no checks are done
+   void row_set(uint64_t uRow, const void* praw_, tag_raw);
+
+
+   void row_set_null(uint64_t uRow);
+   void row_set_null(uint64_t uFrom, uint64_t uCount);
+
+
+   void row_clear() { m_uRowCount = 0; }
+
+   void row_reserve_add(uint64_t uCount);
+   void row_reserve_add() { row_reserve_add(1); }
+
+   bool cell_is_null(uint64_t uRow, unsigned uColumn) const noexcept;
+   bool cell_is_null(uint64_t uRow, std::string_view stringName) const noexcept { return cell_is_null(uRow, column_get_index(stringName)); }
+   const reference* cell_get_reference(uint64_t uRow, unsigned uColumn) const noexcept;
+
+   uint32_t cell_get_value32(uint64_t uRow, unsigned uColumn) const noexcept;
+   uint64_t cell_get_value64(uint64_t uRow, unsigned uColumn) const noexcept;
+
+   gd::variant_view cell_get_variant_view(uint64_t uRow, unsigned uColumn) const noexcept;
+   gd::variant_view cell_get_variant_view(uint64_t uRow, const std::string_view& stringName) const noexcept;
+   std::vector< gd::variant_view > cell_get_variant_view(uint64_t uRow, unsigned uFromColumn, unsigned uToColumn) const;
+   std::vector< gd::variant_view > cell_get_variant_view(uint64_t uRow) const { return cell_get_variant_view(uRow, 0, get_column_count()); }
+
+
+   void cell_set_value(uint64_t uRow, unsigned uColumn, uint32_t uValue);
+   void cell_set_value(uint64_t uRow, unsigned uColumn, uint64_t uValue);
+
+   void cell_set(uint64_t uRow, unsigned uColumn, gd::variant_view variantviewValue);
+   void cell_set(uint64_t uRow, unsigned uColumn, gd::variant_view variantviewValue, tag_convert);
+   void cell_set(uint64_t uRow, const std::string_view& stringName, gd::variant_view variantviewValue);
+   void cell_set(uint64_t uRow, const std::string_view& stringAlias, gd::variant_view variantviewValue, tag_alias);
+   void cell_set(uint64_t uRow, const std::string_view& stringName, gd::variant_view variantviewValue, tag_convert);
+   void cell_set(uint64_t uRow, std::string_view stringName, gd::variant_view variantviewValue, tag_adjust);
+   void cell_set(uint64_t uRow, const std::string_view& stringAlias, gd::variant_view variantviewValue, tag_convert, tag_alias);
+   void cell_set(uint64_t uRow, unsigned uColumn, const std::vector<gd::variant_view>& vectorValue);
+   void cell_set(uint64_t uRow, unsigned uColumn, const std::vector<gd::variant_view>& vectorValue, tag_convert);
+
+
+   void cell_set_null(uint64_t uRow, unsigned uColumn);
+   void cell_set_null(uint64_t uRow, std::string_view stringName);
+   void cell_set_not_null(uint64_t uRow, unsigned uColumn);
+
+// @API [tag: offset] [description: returns information based on offset values]
+
+   /// @brief get column index for byte offset in all allocated memory block for table.
+   unsigned offset_get_column(uint64_t uOffset, gd::types::tag_size8) const noexcept { auto iColumn = offset_find_column(uOffset, gd::types::tag_size8{}); assert(iColumn >= 0); return static_cast<unsigned>(iColumn); }
+   int offset_find_column(uint64_t uOffset, gd::types::tag_size8) const noexcept;
+
+   uint64_t offset_get_row(uint64_t uOffset, gd::types::tag_size8) const noexcept { auto iCell = offset_find_row(uOffset, gd::types::tag_size8{}); assert(iCell >= 0); return static_cast<uint64_t>(iCell); }
+   int64_t offset_find_row(uint64_t uOffset, gd::types::tag_size8) const noexcept;
+
+// @API [tag: harvest] [description: harvest or read information from table]
+
+   /// harvest row values into vector with arguments
+   void harvest(uint64_t uBeginRow, uint64_t uCount, std::vector<gd::argument::arguments>& vectorArguments) const;
+   void harvest(std::vector<gd::argument::arguments>& vectorArguments) const { harvest(0, get_row_count(), vectorArguments); }
+   std::vector<gd::argument::arguments> harvest(tag_arguments) const { std::vector<gd::argument::arguments> v_; harvest(0, get_row_count(), v_); return v_; }
+   void harvest(const std::vector<uint64_t>& vectorRow, std::vector<gd::argument::arguments>& vectorArguments) const;
+   void harvest(const std::vector<uint64_t>& vectorRow, std::vector< std::vector<gd::variant_view> >& vectorRowValue) const;
+   void harvest(const std::vector<uint64_t>& vectorRow, table_base& tableHarvest);
+
+   /// @brief size is same as `get_row_count and returns number of rows
+   size_t size() const { return (size_t)get_row_count(); }
+   /// @brief clear all data in table
+   void clear();
+   /// check if table is empty, don't have and data in table rows
+   bool empty() const noexcept { return (m_puData == nullptr || m_uRowSize == 0); }
+   /// checks if table isn't even initialized (not able to store data)
+   bool empty(tag_raw) const noexcept { return (m_uRowSize == 0 || m_puData == nullptr); }
+
+
+
+public:
+   /// Counts number of values in each array (simd block)
+   unsigned count_pack() const noexcept { return m_uPackCount; }
+   /// Counts number of rows that can be stored in allocated memory, this is the number of reserved rows
+   uint64_t count_reserved_row() const noexcept { return m_uRowReservedPackCount * count_pack(); }
+   /// return number of row packs
+   uint64_t get_row_pack_count() const noexcept { return m_uRowReservedPackCount; }
+   /// Size of each value in bytes, all values in table have this size
+   unsigned size_value() const noexcept { return m_uValueSize; }
+   /// Size of each block/array in bytes
+   unsigned size_pack() const noexcept { return m_uPackCount * size_value(); }
+   /// Offset position for column in row. Use this to get the specific column value in row and array for AoSoA (Array of Structure of Arrays) layout
+   unsigned offset(uint64_t uRow, unsigned uColumn, tag_column) const noexcept { return uColumn * size_pack() + (uRow % count_pack()) * size_value(); }
+
+
+// ## @API [tag: attribute, member] [description: member data to table]
+public:
+   uint8_t* m_puData = nullptr;        ///< data to hold values in table
+   uint8_t* m_puMetaData = nullptr;    ///< data block with row meta information
+
+   unsigned m_uFlags;                  ///< state information for table (eTableFlagNull32, eTableFlagNull64, eTableFlagRowStatus, eTableFlagUniqueStrings )
+
+   unsigned m_uValueSize;              ///< size of each value in bytes, used to calculate row size
+   unsigned m_uPackCount;               ///< number of values for each block/array, in AoSoA (Array of Structure of Arrays) layout
+
+   unsigned m_uRowSize;                ///< row size in bytes
+   unsigned m_uRowMetaSize;            ///< meta data size in bytes for each row
+   unsigned m_uRowGrowBy = eSpaceRowGrowBy;///< if table needs more space, this holds number of rows to grow by
+
+   uint64_t m_uRowCount;               ///< row count (row count * row size = total amount of bytes allocated)
+   uint64_t m_uRowReservedPackCount = eSpaceFirstAllocate; ///< reserved row block count, max number of row blocks that can be placed in allocated memory
+   gd::argument::arguments m_argumentsProperty; ///< table properties
+   references m_references;            ///< Stores blob data
+   names m_namesColumn;                ///< names for columns in table. this works like a data store for const text values used to store column names and aliases
+   detail::columns* m_pcolumns{nullptr};
+
+// ## @API [tag: static] [description: static member methods]
+public:
+   /// Create columns object on heap
+   static detail::columns* new_columns_s();
+
+
+
+};
+
+/** ---------------------------------------------------------------------------
+ * @brief Get number of bytes used to store meta information for each row
+ * *Calculation steps to find out meta size needed for each row*
+ * - null flags for each columnd, 32 or 64 bits (4 or 8 bytes)
+ * - row state, 4 bytes
+ * - arguments object size
+ * @return unsigned bytes needed to store meta information for row
+*/
+inline unsigned table_base::size_row_meta() const noexcept {
+   unsigned uMetaDataSize = 0;
+   if(is_null32() == true)      uMetaDataSize += eSpaceNull32Columns;
+   else if(is_null64() == true) uMetaDataSize += eSpaceNull64Columns;
+   if(is_rowstatus() == true)   uMetaDataSize += eSpaceRowState;
+
+   return uMetaDataSize;
+}
+
+/** ---------------------------------------------------------------------------
+ * @brief Return pointer to row null value section (flags in metadata marking cell null values)
+ * This is the first part of meta data for each row, if table is created to store null values for each column
+ * @param uRow index for row null value is returned for
+ * @return uint8_t* pointer to row null value section
+*/
+inline uint8_t* table_base::row_get_null( uint64_t uRow ) const noexcept {                         assert( uRow < (m_uRowReservedPackCount * count_pack())); assert( m_puMetaData != nullptr );
+   return reinterpret_cast<uint8_t*>( m_puMetaData + (uRow * m_uRowMetaSize) );
+}
+
+/** ---------------------------------------------------------------------------
+ * @brief get position in buffer to row state information for row at index
+ * @param uRow index to row where state is located
+ * @return uint32_t* pointer to position in internal buffer for row state
+*/
+inline uint32_t* table_base::row_get_state(uint64_t uRow) const noexcept {                         assert( uRow < (m_uRowReservedPackCount * count_pack())); assert( m_puMetaData != nullptr );
+   // calculate number of bytes used to store flags for culumns marked as null (cant be over sizeof(uint32_t) * 2 or 8 bytes)
+   // note that state cant be set to both 32 and 64 columns
+   unsigned uNullSize = (m_uFlags & (eTableFlagNull32 | eTableFlagNull64)) * sizeof(uint32_t);     assert(uNullSize <= (sizeof(uint32_t) * 2));
+   return reinterpret_cast<uint32_t*>(m_puMetaData + (uRow * m_uRowMetaSize) + uNullSize); // return pointer to state value
+}
+
+/** ---------------------------------------------------------------------------
+ * @brief set all columns to null in row
+ * @param uRow index to row where values are set to null
+*/
+inline void table_base::row_set_null( uint64_t uRow ) {                                            assert( uRow < (m_uRowReservedPackCount * count_pack())); assert( is_null() == true );
+   auto puRow = row_get_null( uRow );
+
+   if( is_null32() ) *(uint32_t*)puRow =((uint32_t)-1);
+   else              *(uint64_t*)puRow =((uint64_t)-1);
+}
+
+/** ---------------------------------------------------------------------------
+ * @brief Set all values in row to null
+ * @param uFrom start row to set all values to null
+ * @param uCount number of sequential rows to set to null
+*/
+inline void table_base::row_set_null(uint64_t uFrom, uint64_t uCount) {                            assert((uFrom + uCount) <= get_row_count());
+   for(auto u = uFrom, uMax = (uFrom + uCount); u < uMax; u++) row_set_null(u);
+}
+
+
+/** ---------------------------------------------------------------------------
+ * @brief Add row to table and set columns in added row to null
+ * @param uCount number of rows to add
+*/
+inline void table_base::row_add(uint64_t uCount, tag_null) {
+   assert(is_null() == true);
+   auto uBegin = m_uRowCount;
+   row_add(uCount);
+   row_set_null(uBegin, m_uRowCount - uBegin);
+}
+
+
+/** ---------------------------------------------------------------------------
+ * @brief Check if cell is null
+ * @param uRow row for cell
+ * @param uColumn index for cell column
+ * @return true if null, false if not null
+*/
+inline bool table_base::cell_is_null( uint64_t uRow, unsigned uColumn ) const noexcept {           assert( uRow < (m_uRowReservedPackCount * count_pack())); assert( m_uFlags & (eTableFlagNull32|eTableFlagNull64) );
+   uint64_t uNullRow = 0; // flags for null values in row
+   const auto* puRow = row_get_null( uRow );
+   if( is_null32() ) uNullRow = (uint64_t)*(uint32_t*)puRow;
+   else              uNullRow = *(uint64_t*)puRow;
+
+   return (uNullRow & (1ULL << uColumn)) != 0;
+}
+
+
+
+/** ---------------------------------------------------------------------------
+ * @brief Set value in column to null (marks null flag for column)
+ * @param uRow row where cell is
+ * @param uColumn cell column
+*/
+inline void table_base::cell_set_null(uint64_t uRow, unsigned uColumn) {                           assert(uRow < (m_uRowReservedPackCount * count_pack())); assert(m_uFlags & (eTableFlagNull32 | eTableFlagNull64));
+   auto puRow = row_get_null(uRow);
+
+#ifdef _DEBUG
+   uint64_t uNull_d = 0;
+   if(is_null32()) uNull_d = *(uint32_t*)puRow;
+   else              uNull_d = *(uint64_t*)puRow;
+#endif // _DEBUG
+
+   if(is_null32()) *(uint32_t*)puRow |= ((uint32_t)1 << uColumn);
+   else              *(uint64_t*)puRow |= ((uint64_t)1 << uColumn);
+
+#ifdef _DEBUG
+   if(is_null32()) uNull_d = *(uint32_t*)puRow;
+   else              uNull_d = *(uint64_t*)puRow;
+#endif // _DEBUG
+}
+
+/** ---------------------------------------------------------------------------
+ * @brief Set value in column to null (marks null flag for column)
+ * @param uRow row where cell is
+ * @param stringName cell column name
+*/
+inline void table_base::cell_set_null( uint64_t uRow, std::string_view stringName ) {              assert(uRow < (m_uRowReservedPackCount * count_pack())); assert( m_uFlags & (eTableFlagNull32|eTableFlagNull64) );
+   unsigned uColumnIndex = column_get_index( stringName );
+   cell_set_null( uRow, uColumnIndex);
+}
+
+
+inline void table_base::cell_set_not_null(uint64_t uRow, unsigned uColumn) {                       assert(uRow < (m_uRowReservedPackCount * count_pack())); assert(m_uFlags & (eTableFlagNull32 | eTableFlagNull64));
+   auto puRow = row_get_null(uRow);
+
+#ifdef _DEBUG
+   uint64_t uNull_d = 0;
+   if(is_null32()) uNull_d = *(uint32_t*)puRow;
+   else              uNull_d = *(uint64_t*)puRow;
+#endif // _DEBUG
+
+   if(is_null32()) *(uint32_t*)puRow &= ~((uint32_t)1 << uColumn);
+   else              *(uint64_t*)puRow &= ~((uint64_t)1 << uColumn);
+
+#ifdef _DEBUG
+   if(is_null32()) uNull_d = *(uint32_t*)puRow;
+   else              uNull_d = *(uint64_t*)puRow;
+#endif // _DEBUG
+
+}
+
+
+// ============================================================================
+// ================================================================= SIMD TABLE
+// ============================================================================
+
+/** ===========================================================================
+ * \brief simd table, optimized for simd operations using  AoSoA (Array of Structure of Arrays) layout.
+ * 
+ */
+template<std::size_t VALUESIZE = 8, std::size_t PACKCOUNT = 8>
+class table : public table_base
+{
+public:
+   /**
+    * @brief Position in table, used to get or set values in table without knowing the column type
+    */
+   struct position
+   {
+      position() = default;
+      position(uint64_t uRow) noexcept : m_uRow(uRow), m_uColumn(0), m_uOffset(0) {}
+      position(uint64_t uRow, unsigned uColumn) noexcept : m_uRow(uRow), m_uColumn(uColumn), m_uOffset(0) {}
+      position(uint64_t uRow, unsigned uColumn, unsigned uOffset) noexcept : m_uRow(uRow), m_uColumn(uColumn), m_uOffset(uOffset) {}
+      position(const position&) = default;
+
+      constexpr bool operator==(const position&) const noexcept = default;
+      constexpr bool operator<(const position& o) const noexcept { return m_uRow != o.m_uRow ? m_uRow < o.m_uRow : m_uOffset < o.m_uOffset; }
+
+      /// @brief Advance position by uCount bytes, this will advance to next row if needed
+      constexpr position& advance(unsigned uCount) noexcept {
+         uint64_t uTotal = (uint64_t)m_uOffset + uCount;
+         m_uRow += uTotal / VALUESIZE;
+         m_uOffset = (unsigned)(uTotal % VALUESIZE);
+         return *this;
+      }
+
+      uint64_t row() const noexcept { return m_uRow; }
+      unsigned column() const noexcept { assert(m_uColumn < 0xF0000); return m_uColumn; }  // checks for realistic column index, if column index is larger than 0xF0000 then something is wrong
+      unsigned offset() const noexcept { assert(m_uOffset < VALUESIZE); return m_uOffset; }  // checks for realistic offset, if offset is larger than VALUESIZE then something is wrong
+
+      uint64_t m_uRow = 0;      ///< row index in table
+      unsigned m_uColumn = 0;   ///< column index in table
+      unsigned m_uOffset = 0;   ///< byte offset inside the VALUESIZE-byte cell
+   };
+
+   using range = std::pair<position, position>;   // [begin, end)
+
+// ## @API [tag: construct] [description: table construction, lots of constructors to simplify how to create new tables]
+public:
+   table(): table_base() { common_construct_set_simd(); }
+   table(uint64_t uRowCount): table_base(uRowCount) { common_construct_set_simd(); }
+   table(tag_repare_to_add_column) : table_base(eSpaceFirstAllocate, tag_repare_to_add_column{}) { common_construct_set_simd(); }
+   table(uint64_t uRowCount, tag_repare_to_add_column) : table_base(uRowCount, tag_repare_to_add_column{}) { common_construct_set_simd(); }
+   table(uint64_t uRowCount, unsigned uFlags): table_base(uRowCount, uFlags) { common_construct_set_simd(); }
+   table(uint64_t uRowCount, unsigned uFlags, unsigned uGrowBy): table_base(uRowCount, uFlags, uGrowBy) { common_construct_set_simd(); }
+   table(tag_null): table_base(tag_null{}) { common_construct_set_simd(); }
+   table(tag_full_meta): table_base(tag_full_meta{}) { common_construct_set_simd(); }
+
+   table(unsigned uFlags, const std::vector< std::tuple< std::string_view, unsigned, std::string_view > >& vectorValue) : table_base(uFlags, vectorValue) { common_construct_set_simd(); }
+
+   table(gd::variant_view variantviewValue, tag_prepare): table_base(variantviewValue, tag_prepare{}, VALUESIZE, PACKCOUNT) {}
+   table(const std::vector< std::string_view >& vectorValue, tag_prepare): table_base(vectorValue, tag_prepare{}, VALUESIZE, PACKCOUNT) {}
+   table(unsigned uFlags, const std::vector< std::tuple< std::string_view, std::string_view > >& vectorValue, tag_prepare): table_base(uFlags, vectorValue, tag_prepare{}, VALUESIZE, PACKCOUNT) {}
+   table(unsigned uFlags, const std::vector< std::tuple< std::string_view, unsigned, std::string_view > >& vectorValue, tag_prepare): table_base(uFlags, vectorValue, tag_prepare{}, VALUESIZE, PACKCOUNT) {}
+   table(const std::vector< std::tuple< std::string_view, unsigned, std::string_view, gd::variant_view > >& vectorValue, tag_prepare): table_base(vectorValue, tag_prepare{}, VALUESIZE, PACKCOUNT) {}
+
+
+   void common_construct_set_simd() { m_uValueSize = VALUESIZE; m_uPackCount = PACKCOUNT; }
+
+   // @API  [tag: get, primitives] [description: low-level methods to get values from table without knowing the column type]
+
+   /// Get value from table at position, this is a low level method that can be used to get values from table without knowing the column type
+   template <typename TYPE>
+   TYPE get(position position_) const noexcept;
+
+   bool     get_bool(position position_) const noexcept     { return get<bool>(position_); }
+   uint8_t  get_uint8(position position_) const noexcept    { return get<uint8_t>(position_); }
+   uint16_t get_uint16(position position_) const noexcept   { return get<uint16_t>(position_); }
+   uint32_t get_uint32(position position_) const noexcept   { return get<uint32_t>(position_); }
+   uint64_t get_uint64(position position_) const noexcept   { return get<uint64_t>(position_); }
+   int8_t   get_int8(position position_) const noexcept     { return (int8_t)get_uint8(position_); }
+   int16_t  get_int16(position position_) const noexcept    { return (int16_t)get_uint16(position_); }
+   int32_t  get_int32(position position_) const noexcept    { return (int32_t)get_uint32(position_); }
+   int64_t  get_int64(position position_) const noexcept    { return (int64_t)get_uint64(position_); }
+   float    get_float(position position_) const noexcept    { return get<float>(position_); }
+   double   get_double(position position_) const noexcept   { return get<double>(position_); }
+
+   template <typename TYPE>
+   void set(position position_, TYPE value_) noexcept;
+   void set_bool(position position_, bool value_) noexcept { set<bool>(position_, value_); }
+   void set_uint8(position position_, uint8_t value_) noexcept { set<uint8_t>(position_, value_); }
+   void set_uint16(position position_, uint16_t value_) noexcept { set<uint16_t>(position_, value_); }
+   void set_uint32(position position_, uint32_t value_) noexcept { set<uint32_t>(position_, value_); }
+   void set_uint64(position position_, uint64_t value_) noexcept { set<uint64_t>(position_, value_); }
+   void set_int8(position position_, int8_t value_) noexcept { set<int8_t>(position_, value_); }
+   void set_int16(position position_, int16_t value_) noexcept { set<int16_t>(position_, value_); }
+   void set_int32(position position_, int32_t value_) noexcept { set<int32_t>(position_, value_); }
+   void set_int64(position position_, int64_t value_) noexcept { set<int64_t>(position_, value_); }
+   void set_float(position position_, float value_) noexcept { set<float>(position_, value_); }
+   void set_double(position position_, double value_) noexcept { set<double>(position_, value_); }
+
+   /// Get number of pack rows, each pack row contains PACKCOUNT number of rows
+   std::size_t get_row_pack_count() const noexcept { assert(m_uRowCount % count_pack_s() == 0); return m_uRowCount / count_pack_s(); }
+
+   /// Add rows to table, this is a simple wrapper for row_add that adds rows in packs, so if you add 1 row it will actually add PACKCOUNT number of rows
+   void row_add_pack(uint64_t uCount) { row_add(uCount * count_pack_s()); }
+   uint64_t row_add_pack_one() { row_add_pack(1); return get_row_pack_count() - 1; }
+
+   uint8_t* row_get(uint64_t uRow) const noexcept;
+
+   uint8_t* rowpack_get(uint64_t uRowPack, unsigned uColumn) noexcept;
+   const uint8_t* rowpack_get(uint64_t uRowPack, unsigned uColumn) const noexcept;
+
+   std::pair<bool, std::string> prepare() { return table_base::prepare(m_uValueSize_s, m_uPackCount_s); }
+
+   void pack_set_value(uint64_t uRowPack, unsigned uColumn, const uint8_t* puValue) noexcept;
+
+   
+   /// Broadcast a single value to all elements in a pack
+   template <typename TYPE>
+   void pack_broadcast_value(uint64_t uRowPack, unsigned uColumn, TYPE value_) noexcept;
+
+   /// Plant values from a range into a pack for all rows in table
+   template <typename TYPE, std::ranges::contiguous_range RANGE>
+   void pack_plant(uint64_t uRowPack, unsigned uColumn, const RANGE& range_) noexcept;
+
+   template <typename TYPE>
+   void pack_plant_span(std::span<const TYPE> span, unsigned uColumn = 0, TYPE padValue = TYPE{}) noexcept;
+
+   /// Harvest values from a pack into a range
+   template <typename TYPE, std::ranges::contiguous_range RANGE>
+   void pack_harvest(uint64_t uRowPack, unsigned uColumn, RANGE& range_) const noexcept;
+
+   /// Get span of values from a pack for direct access
+   template <typename TYPE>
+   std::span<TYPE> pack_harvest_span(uint64_t uRowPack, unsigned uColumn = 0) noexcept;
+
+   /// Get span of values from a pack for direct access
+   template <typename TYPE>
+   std::span<const TYPE> pack_harvest_span(uint64_t uRowPack, unsigned uColumn = 0) const noexcept;
+
+   /// Appends values from a pack into a span, returns number of values appended
+   template <typename TYPE, typename OUTPUT_ITERATOR>
+   std::size_t pack_extract_iter(uint64_t uRowPack, unsigned uColumn, OUTPUT_ITERATOR itDestination) const noexcept;
+
+   /// Extract elements where predicate is truthy
+   template <typename TYPE, typename PREDICATE>
+   std::size_t pack_extract_if(uint64_t uRowPack, unsigned uColumn, PREDICATE&& predicate_, std::span<TYPE> spanGather) const noexcept;
+
+   /// Extract elements where predicate is truthy - writes to output iterator
+   template <typename TYPE, typename PREDICATE, typename OUTPUT_ITERATOR>
+   std::size_t pack_extract_if_iter(uint64_t uRowPack, unsigned uColumn, PREDICATE&& predicate_, OUTPUT_ITERATOR itDestination) const noexcept;
+
+   template <typename TYPE>
+   uint64_t pack_find_value(uint64_t uRowPack, unsigned uColumn, TYPE value_) const noexcept;
+
+   /// Bitmask of pack elements for which predicate_ returns true (generalizes pack_find_value beyond equality)
+   template <typename TYPE, typename PREDICATE>
+   uint64_t pack_find_value_if(uint64_t uRowPack, unsigned uColumn, PREDICATE&& predicate_) const noexcept;
+
+   /// True if any pack element satisfies predicate_ - cheaper than pack_find_value_if(...) != 0
+   template <typename TYPE, typename PREDICATE>
+   bool pack_any(uint64_t uRowPack, unsigned uColumn, PREDICATE&& predicate_) const noexcept;
+
+   /// Index of the first pack element equal to value_, or npos if no element matches
+   template <typename TYPE>
+   std::size_t pack_find_first(uint64_t uRowPack, unsigned uColumn, TYPE value_) const noexcept;
+
+   /// Index of the last pack element equal to value_, or npos if no element matches
+   template <typename TYPE>
+   std::size_t pack_find_last(uint64_t uRowPack, unsigned uColumn, TYPE value_) const noexcept;
+
+   /// Smallest value among a pack's elements
+   template <typename TYPE>
+   TYPE pack_min(uint64_t uRowPack, unsigned uColumn) const noexcept;
+
+   /// Largest value among a pack's elements
+   template <typename TYPE>
+   TYPE pack_max(uint64_t uRowPack, unsigned uColumn) const noexcept;
+
+   /// Sum of a pack's elements
+   template <typename TYPE>
+   TYPE pack_sum(uint64_t uRowPack, unsigned uColumn) const noexcept;
+
+   
+   static constexpr std::size_t npos = static_cast<std::size_t>(-1); ///< Sentinel returned by pack_find_first/pack_find_last when nothing matches (mirrors std::string::npos)
+   static constexpr std::size_t m_uValueSize_s = VALUESIZE; ///< Size of each value in bytes, all values in table have this size
+   static constexpr std::size_t m_uPackCount_s = PACKCOUNT; ///< Number of values for each block/array, in AoSoA (Array of Structure of Arrays) layout 
+
+   /// Convert row to pack row
+   static constexpr uint64_t row_to_pack_s(uint64_t uRow) noexcept { return uRow / PACKCOUNT; }
+   static constexpr unsigned size_pack_s() noexcept { return PACKCOUNT * VALUESIZE; }
+   static constexpr unsigned count_pack_s() noexcept { return PACKCOUNT; }
+};
+
+
+/** --------------------------------------------------------------------------- get
+ * @brief Read a value from `position_` as `TYPE`
+ * @tparam TYPE Value type to read from the table
+ * @param position_ Cell position in the table
+ * @return TYPE Value read from the table
+ */
+template<std::size_t VALUESIZE, std::size_t PACKCOUNT>
+template<typename TYPE>
+TYPE table<VALUESIZE, PACKCOUNT>::get(position position_) const noexcept
+{
+   uint64_t uRowPack = row_to_pack_s(position_.row());
+   unsigned uLocalByte = (unsigned)(position_.row() % PACKCOUNT) * VALUESIZE + position_.offset();
+
+   if(uLocalByte + sizeof(TYPE) <= size_pack_s())            // fits inside this pack, single fast read
+   {
+      const uint8_t* p = rowpack_get(uRowPack, position_.column());           // pointer to start of pack
+      TYPE value_; // temporary buffer to hold bytes of value  
+      std::memcpy(&value_, p + uLocalByte, sizeof(TYPE));
+      return value_;
+   }
+
+   // ## spans into next pack - assemble byte by byte via safe per-byte reads
+   uint8_t puBytes[sizeof(TYPE)];
+   position pos_ = position_;
+   for(std::size_t u = 0; u < sizeof(TYPE); ++u) { puBytes[u] = get_uint8(pos_); pos_.advance(1); }
+   TYPE value_; // temporary buffer to hold bytes of value
+   std::memcpy(&value_, puBytes, sizeof(TYPE));
+   return value_;
+}
+
+/** --------------------------------------------------------------------------- set
+ * @brief Write a value to `position_` as `TYPE`
+ * @tparam TYPE Value type to write into the table
+ * @param position_ Cell position in the table
+ * @param value_ Value to store in the table
+ */
+template<std::size_t VALUESIZE, std::size_t PACKCOUNT>
+template <typename TYPE>
+void table<VALUESIZE, PACKCOUNT>::set(position position_, TYPE value_) noexcept
+{
+   uint64_t uRowPack = row_to_pack_s(position_.row());
+   unsigned uLocalByte = (unsigned)(position_.row() % PACKCOUNT) * VALUESIZE + position_.offset();
+
+   if(uLocalByte + sizeof(TYPE) <= size_pack_s())            // fits inside this pack, single fast write
+   {
+      uint8_t* p = rowpack_get(uRowPack, position_.column());                 // pointer to start of pack
+      std::memcpy(p + uLocalByte, &value_, sizeof(TYPE));
+      return;
+   }
+
+   // ## spans into next pack - assemble byte by byte via safe per-byte writes
+   uint8_t puBytes[sizeof(TYPE)]; // temporary buffer to hold bytes of value
+   std::memcpy(puBytes, &value_, sizeof(TYPE));
+   position pos_ = position_;
+   for(std::size_t u = 0; u < sizeof(TYPE); ++u) { set_uint8(pos_, puBytes[u]); pos_.advance(1); }
+}
+
+/** --------------------------------------------------------------------------- row_get
+ * @brief Get pointer to the row data for a specific row index
+ * @param uRow The row index
+ * @return Pointer to the row data
+ */
+template<std::size_t VALUESIZE, std::size_t PACKCOUNT>
+uint8_t* table<VALUESIZE, PACKCOUNT>::row_get(uint64_t uRow) const noexcept {
+   // ## actual row is result of dividing row index by pack count, because each row block contains PACKCOUNT number of rows
+   uint64_t uRowPack = row_to_pack_s(uRow);                                                        assert(uRowPack < m_uRowReservedPackCount );
+   return m_puData + uRowPack * m_uRowSize;
+}
+
+template<std::size_t VALUESIZE, std::size_t PACKCOUNT>
+uint8_t* table<VALUESIZE, PACKCOUNT>::rowpack_get(uint64_t uRowPack, unsigned uColumn) noexcept { 
+   uint8_t* p_ = m_puData + (m_uRowSize * uRowPack) + (uColumn * size_pack_s()); 
+
+   if constexpr((VALUESIZE * PACKCOUNT) % 64 == 0) { return std::assume_aligned<64>(p_); }
+   else if constexpr((VALUESIZE * PACKCOUNT) % 32 == 0) { return std::assume_aligned<32>(p_); }
+   else { return p_; }
+}
+
+template<std::size_t VALUESIZE, std::size_t PACKCOUNT>
+const uint8_t* table<VALUESIZE, PACKCOUNT>::rowpack_get(uint64_t uRowPack, unsigned uColumn) const noexcept { 
+   const uint8_t* p_ = m_puData + (m_uRowSize * uRowPack) + (uColumn * size_pack_s()); 
+
+   if constexpr((VALUESIZE * PACKCOUNT) % 64 == 0) { return std::assume_aligned<64>(p_); }
+   else if constexpr((VALUESIZE * PACKCOUNT) % 32 == 0) { return std::assume_aligned<32>(p_); }
+   else { return p_; }
+}
+
+/** ---------------------------------------------------------------------------
+ * @brief Set value in table for specific row pack and column
+ * @param uRowPack The row pack index, each row pack contains PACKCOUNT number of rows
+ * @param uColumn The column index
+ * @param puValue Pointer to the value to set, this has to be a pointer to a buffer of size VALUESIZE bytes
+ */
+template<std::size_t VALUESIZE, std::size_t PACKCOUNT>
+void table<VALUESIZE, PACKCOUNT>::pack_set_value(uint64_t uRowPack, unsigned uColumn, const uint8_t* puValue) noexcept { assert(uRowPack < m_uRowReservedPackCount); assert(uColumn < get_column_count());
+   uint8_t* puPackBase = rowpack_get(uRowPack, uColumn);
+   std::memcpy(puPackBase, puValue, VALUESIZE);
+}
+
+/** --------------------------------------------------------------------------- pack_broadcast_value
+ * @brief Broadcast a single value to all elements in a pack
+ * @tparam TYPE The value type
+ * @param uRowPack The row pack index
+ * @param uColumn The column index
+ * @param value_ Value to broadcast to all elements in the pack
+ *
+ * @note This is optimized for SIMD broadcast operations
+ * @note The compiler will auto-vectorize this to vbroadcast or equivalent
+ */
+template <std::size_t VALUESIZE, std::size_t PACKCOUNT>
+template<typename TYPE>
+inline void table<VALUESIZE, PACKCOUNT>::pack_broadcast_value(uint64_t uRowPack, unsigned uColumn, TYPE value_) noexcept { assert(uRowPack < m_uRowReservedPackCount); assert(uColumn < get_column_count()); assert((VALUESIZE == sizeof(TYPE)) && "Value size mismatch");
+   uint8_t* puPackBase = rowpack_get(uRowPack, uColumn);                       // Get pointer to the start of the column data for this pack
+   TYPE* pDestination_ = reinterpret_cast<TYPE*>(puPackBase);
+
+   for(size_t u = 0; u < count_pack_s(); ++u) { pDestination_[u] = value_; }
+}
+
+
+/** --------------------------------------------------------------------------- pack_plant
+ * @brief Plant contiguous values into a specific pack and column.
+ * @tparam TYPE Element type in destination pack.
+ * @tparam RANGE Contiguous source range type.
+ * @param uRowPack Target pack-row index.
+ * @param uColumn Target column index.
+ * @param range_ Source range used for copy.
+ *
+ * @note The range value type must be identical to `TYPE`.
+ * @note Source must contain enough elements to fill one full pack.
+ */
+template <std::size_t VALUESIZE, std::size_t PACKCOUNT>
+template <typename TYPE, std::ranges::contiguous_range RANGE>
+void table<VALUESIZE, PACKCOUNT>::pack_plant(uint64_t uRowPack, unsigned uColumn, const RANGE& range_) noexcept { assert(uRowPack < m_uRowReservedPackCount); assert(uColumn < get_column_count());
+                                                                                                   static_assert(std::same_as<std::ranges::range_value_t<RANGE>, TYPE>, "Range value type must match TYPE");
+   constexpr std::size_t uCount = count_pack_s() * VALUESIZE / sizeof(TYPE);                       static_assert(count_pack_s() * VALUESIZE % sizeof(TYPE) == 0, "TYPE must evenly divide pack byte size");
+                                                                                                   assert(std::ranges::size(range_) >= uCount);
+   TYPE* pDestination_ = reinterpret_cast<TYPE*>(rowpack_get(uRowPack, uColumn));
+   constexpr std::size_t uBytesToCopy = sizeof(TYPE) * uCount;
+   std::memcpy(pDestination_, std::ranges::data(range_), uBytesToCopy);       // Copy the values from the range to the pack
+}
+
+/** --------------------------------------------------------------------------- pack_plant_span
+ * @brief Plant span data into consecutive packs in one column.
+ * @tparam TYPE Element type for source and destination.
+ * @param span Source span with values to plant.
+ * @param uColumn Destination column index.
+ * @param pad_ Value used to pad incomplete final pack.
+ *
+ * @note Full packs are copied directly for throughput.
+ * @note Remaining elements are padded and copied as one final pack.
+ */
+template <std::size_t VALUESIZE, std::size_t PACKCOUNT>
+template <typename TYPE>
+void table<VALUESIZE, PACKCOUNT>::pack_plant_span(std::span<const TYPE> span, unsigned uColumn, TYPE pad_) noexcept {  static_assert(sizeof(TYPE) <= VALUESIZE, "TYPE must fit within VALUESIZE");
+   constexpr std::size_t uBytesPerPack = PACKCOUNT * VALUESIZE; // Total bytes in one pack (pack is simd optimized array of values)
+   constexpr std::size_t uElementsPerPack = uBytesPerPack / sizeof(TYPE); // Total number of TYPE elements that fit in one pack (to manage types smaller tha VALUESIZE)
+   
+   alignas(64) std::array<TYPE, uElementsPerPack> arrayPack{}; // Create temporary buffer for packing
+
+   const TYPE* pSource = span.data(); // Pointer to start source data
+   const std::size_t uSourceLength = span.size(); // Total number of elements in source span
+   
+   std::size_t uPackIndex = 0;
+
+   // 1: Process complete packs where source data exists
+   while((uPackIndex + uElementsPerPack) <= uSourceLength)
+   {
+      uint64_t uRowPack = row_add_pack_one();
+
+      // ## Directly copy source data to the pack, inform compiler that it can safely optimize this
+      TYPE* GD_RESTRICT pDestinationRaw = reinterpret_cast<TYPE*>(rowpack_get(uRowPack, uColumn));
+      TYPE* GD_RESTRICT pDestination = std::assume_aligned<64>(pDestinationRaw);
+
+      for(std::size_t u = 0; u < uElementsPerPack; ++u) { pDestination[u] = pSource[uPackIndex + u]; }
+
+      uPackIndex += uElementsPerPack;
+   }
+
+   // 2: Process remaining elements and fill with padding
+   const std::size_t uRemainingElements = uSourceLength - uPackIndex;
+
+   if(uRemainingElements > 0) {
+      uint64_t uRowPack = row_add_pack_one();
+
+      TYPE* GD_RESTRICT pDestinationRaw = reinterpret_cast<TYPE*>(rowpack_get(uRowPack, uColumn));
+      TYPE* GD_RESTRICT pDestination = std::assume_aligned<64>(pDestinationRaw);
+
+      const TYPE* GD_RESTRICT pSourceRemainder = pSource + uPackIndex;
+      std::size_t uPosition = 0;
+
+      // Copy actual leftover data
+      std::memcpy(pDestination, pSourceRemainder, uRemainingElements * sizeof(TYPE));
+
+      // Pad the rest of the pack
+      std::fill(pDestination + uRemainingElements, pDestination + uElementsPerPack, pad_);
+   }
+}
+
+/** --------------------------------------------------------------------------- pack_harvest
+ * @brief Harvest values from a pack into a range
+ * @tparam TYPE The value type to interpret the data as
+ * @param uRowPack The row pack index
+ * @param uColumn The column index
+ * @param range_ Reference to a range where the harvested values will be stored (must have at least PACKCOUNT elements)
+ *
+ * @note This is optimized for SIMD operations
+ * @note The compiler will auto-vectorize this to load operations or equivalent
+*/
+template <std::size_t VALUESIZE, std::size_t PACKCOUNT>
+template <typename TYPE, std::ranges::contiguous_range RANGE>
+void table<VALUESIZE, PACKCOUNT>::pack_harvest(uint64_t uRowPack, unsigned uColumn, RANGE& range_) const noexcept { assert(uRowPack < m_uRowReservedPackCount); assert(uColumn < get_column_count()); assert((VALUESIZE == sizeof(TYPE)) && "Value size mismatch"); assert(std::ranges::size(range_) >= count_pack_s());
+                                                                                                   static_assert(std::same_as<std::ranges::range_value_t<RANGE>, TYPE>, "Range value type must match TYPE");
+   const uint8_t* puPackBase = rowpack_get(uRowPack, uColumn);                 // Get pointer to the start of the column data for this pack
+   const TYPE* pSource_ = reinterpret_cast<const TYPE*>(puPackBase);
+   std::memcpy(std::ranges::data(range_), pSource_, sizeof(TYPE) * count_pack_s());
+}
+
+/** --------------------------------------------------------------------------- pack_find_value
+ * @brief Search a specific pack for a value and return a bitmask of match positions.
+ * @tparam TYPE Element type to find.
+ * @param uRowPack Target pack-row index.
+ * @param uColumn Target column index.
+ * @param value_ Value to search for.
+ * @return uint64_t Bitmask where bit 'n' is 1 if element 'n' matches valueSearch.
+ */
+template <std::size_t VALUESIZE, std::size_t PACKCOUNT>
+template <typename TYPE>
+uint64_t table<VALUESIZE, PACKCOUNT>::pack_find_value(uint64_t uRowPack, unsigned uColumn, TYPE value_) const noexcept { assert(uRowPack < m_uRowReservedPackCount); assert(uColumn < get_column_count());
+                                                                                                   static_assert(count_pack_s() * VALUESIZE % sizeof(TYPE) == 0, "TYPE must evenly divide pack byte size");
+   constexpr std::size_t uCount = count_pack_s() * VALUESIZE / sizeof(TYPE);                       static_assert(uCount <= 64, "reinterpreted element count exceeds 64-bit mask width");
+                                                                                                   
+   const TYPE* GD_RESTRICT puPackBaseRaw = reinterpret_cast<const TYPE*>(rowpack_get(uRowPack, uColumn));
+   const TYPE* GD_RESTRICT puPackBase = std::assume_aligned<64>(puPackBaseRaw);
+
+   uint64_t uMask = 0;
+   if constexpr(uCount >= 4 && (uCount % 4) == 0) {
+      for(unsigned u = 0; u < uCount; ++u) { uMask |= (uint64_t(puPackBase[u] == value_) << u); }
+   }
+   else {
+      for(unsigned u = 0; u < uCount; ++u) 
+      {
+         if(puPackBase[u] == value_) { uMask |= (1ULL << u); }
+      }
+   }
+
+   return uMask;
+}
+
+/** --------------------------------------------------------------------------- pack_find_value_if
+ * @brief Search a specific pack for elements matching an arbitrary predicate and return a bitmask of match positions.
+ * @tparam TYPE Element type to test.
+ * @tparam PREDICATE Callable taking TYPE and returning something contextually convertible to bool.
+ * @param uRowPack Target pack-row index.
+ * @param uColumn Target column index.
+ * @param predicate_ Predicate evaluated per element.
+ * @return uint64_t Bitmask where bit 'n' is 1 if predicate_(element n) is true.
+ *
+ * @note Deliberately the same flat, single-loop shape as pack_find_value - a hand-unrolled version of
+ *       pack_find_value was measured (see disassembly) to produce *worse* MSVC codegen, an extra
+ *       shift/indirection per block. Do not "improve" this into a manually unrolled loop without
+ *       re-checking the disassembly; the flat form is the faster one on MSVC.
+ * @note PREDICATE must be a template callable (lambda or functor) resolved at compile time, never
+ *       std::function or a function pointer - an indirect call here forces a real call per element
+ *       and turns this back into branchy, non-branch-free code, defeating the whole point.
+ * @note Keep predicate_ cheap (a comparison, a range check) - this always evaluates every element
+ *       with no early exit, which is the fast choice for a small fixed-size pack but a bad one if
+ *       predicate_ itself is expensive.
+ */
+template <std::size_t VALUESIZE, std::size_t PACKCOUNT>
+template <typename TYPE, typename PREDICATE>
+uint64_t table<VALUESIZE, PACKCOUNT>::pack_find_value_if(uint64_t uRowPack, unsigned uColumn, PREDICATE&& predicate_) const noexcept { assert(uRowPack < m_uRowReservedPackCount); assert(uColumn < get_column_count());
+                                                                                                   static_assert(count_pack_s() * VALUESIZE % sizeof(TYPE) == 0, "TYPE must evenly divide pack byte size");
+   constexpr std::size_t uCount = count_pack_s() * VALUESIZE / sizeof(TYPE);                       static_assert(uCount <= 64, "reinterpreted element count exceeds 64-bit mask width");
+
+   const TYPE* GD_RESTRICT puPackBaseRaw = reinterpret_cast<const TYPE*>(rowpack_get(uRowPack, uColumn));
+   const TYPE* GD_RESTRICT puPackBase = std::assume_aligned<64>(puPackBaseRaw);
+
+   uint64_t uMask = 0;
+   for(unsigned u = 0; u < uCount; ++u) { uMask |= (uint64_t(bool(predicate_(puPackBase[u]))) << u); }
+   return uMask;
+}
+
+/** --------------------------------------------------------------------------- pack_any
+ * @brief Test whether any pack element satisfies predicate_, without assembling a positional bitmask.
+ * @tparam TYPE Element type to test.
+ * @tparam PREDICATE Callable taking TYPE and returning something contextually convertible to bool.
+ * @param uRowPack Target pack-row index.
+ * @param uColumn Target column index.
+ * @param predicate_ Predicate evaluated per element.
+ * @return bool true if predicate_ returned true for at least one element.
+ *
+ * @note Cheaper than `pack_find_value_if(...) != 0`: no per-element shift and no 64-bit mask assembly,
+ *       just a narrow OR accumulation - fewer instructions for the same answer.
+ * @note Deliberately branch-free: every element is evaluated, there is no early exit. For a small,
+ *       fixed-size pack with a cheap predicate this beats a branchy early-exit loop, because pack
+ *       contents are typically data-dependent/unpredictable, so the branch mispredicts about as often
+ *       as it doesn't - you are then paying a misprediction to (maybe) skip a handful of near-free
+ *       compares. That trade only flips if predicate_ becomes genuinely expensive (a function call
+ *       into other data, not a plain comparison); in that case prefer std::any_of over
+ *       pack_harvest_span(...) with an explicit early-exit loop instead of this method.
+ */
+template <std::size_t VALUESIZE, std::size_t PACKCOUNT>
+template <typename TYPE, typename PREDICATE>
+bool table<VALUESIZE, PACKCOUNT>::pack_any(uint64_t uRowPack, unsigned uColumn, PREDICATE&& predicate_) const noexcept { assert(uRowPack < m_uRowReservedPackCount); assert(uColumn < get_column_count());
+                                                                                                   static_assert(count_pack_s() * VALUESIZE % sizeof(TYPE) == 0, "TYPE must evenly divide pack byte size");
+   constexpr std::size_t uCount = count_pack_s() * VALUESIZE / sizeof(TYPE);
+
+   const TYPE* GD_RESTRICT puPackBaseRaw = reinterpret_cast<const TYPE*>(rowpack_get(uRowPack, uColumn));
+   const TYPE* GD_RESTRICT puPackBase = std::assume_aligned<64>(puPackBaseRaw);
+
+   bool bAny = false;
+   for(std::size_t u = 0; u < uCount; ++u) { bAny |= bool(predicate_(puPackBase[u])); }
+   return bAny;
+}
+
+/** --------------------------------------------------------------------------- pack_find_first
+ * @brief Find the index of the first pack element equal to value_.
+ * @tparam TYPE Element type to find.
+ * @param uRowPack Target pack-row index.
+ * @param uColumn Target column index.
+ * @param value_ Value to search for.
+ * @return std::size_t Index of the first match, or npos if no element matches.
+ *
+ * @note Built on pack_find_value's bitmask; countr_zero picks out the lowest set bit in one step.
+ */
+template <std::size_t VALUESIZE, std::size_t PACKCOUNT>
+template <typename TYPE>
+std::size_t table<VALUESIZE, PACKCOUNT>::pack_find_first(uint64_t uRowPack, unsigned uColumn, TYPE value_) const noexcept {
+   uint64_t uMask = pack_find_value<TYPE>(uRowPack, uColumn, value_);
+   if(uMask == 0) return npos;
+   return (std::size_t)std::countr_zero(uMask);
+}
+
+/** --------------------------------------------------------------------------- pack_find_last
+ * @brief Find the index of the last pack element equal to value_.
+ * @tparam TYPE Element type to find.
+ * @param uRowPack Target pack-row index.
+ * @param uColumn Target column index.
+ * @param value_ Value to search for.
+ * @return std::size_t Index of the last match, or npos if no element matches.
+ */
+template <std::size_t VALUESIZE, std::size_t PACKCOUNT>
+template <typename TYPE>
+std::size_t table<VALUESIZE, PACKCOUNT>::pack_find_last(uint64_t uRowPack, unsigned uColumn, TYPE value_) const noexcept {
+   uint64_t uMask = pack_find_value<TYPE>(uRowPack, uColumn, value_);
+   if(uMask == 0) return npos;
+   return (std::size_t)(63 - std::countl_zero(uMask));
+}
+
+/** --------------------------------------------------------------------------- pack_min
+ * @brief Smallest value among a pack's elements.
+ * @tparam TYPE Element type to reduce over.
+ * @param uRowPack Target pack-row index.
+ * @param uColumn Target column index.
+ * @return TYPE Smallest element value in the pack.
+ */
+template <std::size_t VALUESIZE, std::size_t PACKCOUNT>
+template <typename TYPE>
+TYPE table<VALUESIZE, PACKCOUNT>::pack_min(uint64_t uRowPack, unsigned uColumn) const noexcept { assert(uRowPack < m_uRowReservedPackCount); assert(uColumn < get_column_count());
+                                                                                                   static_assert(std::is_arithmetic_v<TYPE>, "TYPE must be arithmetic for pack_min");
+                                                                                                   static_assert(count_pack_s() * VALUESIZE % sizeof(TYPE) == 0, "TYPE must evenly divide pack byte size");
+   constexpr std::size_t uCount = count_pack_s() * VALUESIZE / sizeof(TYPE);
+
+   const TYPE* GD_RESTRICT puPackBaseRaw = reinterpret_cast<const TYPE*>(rowpack_get(uRowPack, uColumn));
+   const TYPE* GD_RESTRICT puPackBase = std::assume_aligned<64>(puPackBaseRaw);
+
+   TYPE valueMin = puPackBase[0];
+   for(std::size_t u = 1; u < uCount; ++u) { valueMin = std::min(valueMin, puPackBase[u]); }
+   return valueMin;
+}
+
+/** --------------------------------------------------------------------------- pack_max
+ * @brief Largest value among a pack's elements.
+ * @tparam TYPE Element type to reduce over.
+ * @param uRowPack Target pack-row index.
+ * @param uColumn Target column index.
+ * @return TYPE Largest element value in the pack.
+ */
+template <std::size_t VALUESIZE, std::size_t PACKCOUNT>
+template <typename TYPE>
+TYPE table<VALUESIZE, PACKCOUNT>::pack_max(uint64_t uRowPack, unsigned uColumn) const noexcept { assert(uRowPack < m_uRowReservedPackCount); assert(uColumn < get_column_count());
+                                                                                                   static_assert(std::is_arithmetic_v<TYPE>, "TYPE must be arithmetic for pack_max");
+                                                                                                   static_assert(count_pack_s() * VALUESIZE % sizeof(TYPE) == 0, "TYPE must evenly divide pack byte size");
+   constexpr std::size_t uCount = count_pack_s() * VALUESIZE / sizeof(TYPE);
+
+   const TYPE* GD_RESTRICT puPackBaseRaw = reinterpret_cast<const TYPE*>(rowpack_get(uRowPack, uColumn));
+   const TYPE* GD_RESTRICT puPackBase = std::assume_aligned<64>(puPackBaseRaw);
+
+   TYPE valueMax = puPackBase[0];
+   for(std::size_t u = 1; u < uCount; ++u) { valueMax = std::max(valueMax, puPackBase[u]); }
+   return valueMax;
+}
+
+/** --------------------------------------------------------------------------- pack_sum
+ * @brief Sum of a pack's elements.
+ * @tparam TYPE Element type to reduce over.
+ * @param uRowPack Target pack-row index.
+ * @param uColumn Target column index.
+ * @return TYPE Sum of all element values in the pack.
+ *
+ * @note No widening accumulator - sums as TYPE, same tradeoff callers already accept elsewhere in this file.
+ */
+template <std::size_t VALUESIZE, std::size_t PACKCOUNT>
+template <typename TYPE>
+TYPE table<VALUESIZE, PACKCOUNT>::pack_sum(uint64_t uRowPack, unsigned uColumn) const noexcept { assert(uRowPack < m_uRowReservedPackCount); assert(uColumn < get_column_count());
+                                                                                                   static_assert(std::is_arithmetic_v<TYPE>, "TYPE must be arithmetic for pack_sum");
+                                                                                                   static_assert(count_pack_s() * VALUESIZE % sizeof(TYPE) == 0, "TYPE must evenly divide pack byte size");
+   constexpr std::size_t uCount = count_pack_s() * VALUESIZE / sizeof(TYPE);
+
+   const TYPE* GD_RESTRICT puPackBaseRaw = reinterpret_cast<const TYPE*>(rowpack_get(uRowPack, uColumn));
+   const TYPE* GD_RESTRICT puPackBase = std::assume_aligned<64>(puPackBaseRaw);
+
+   TYPE valueSum = TYPE{};
+   for(std::size_t u = 0; u < uCount; ++u) { valueSum += puPackBase[u]; }
+   return valueSum;
+}
+
+
+/** --------------------------------------------------------------------------- pack_harvest_span
+ * @brief Get a span of values from a pack for direct SIMD/data processing
+ * @tparam TYPE The value type to interpret the data as
+ * @param uRowPack The row pack index
+ * @param uColumn The column index
+ * @return std::span<TYPE> Span covering PACKCOUNT elements
+ *
+ * @note This does NOT copy data - returns direct view of table memory
+ * @note Caller must ensure pack exists and column is valid
+*/
+template <std::size_t VALUESIZE, std::size_t PACKCOUNT>
+template <typename TYPE>
+inline std::span<TYPE> table<VALUESIZE, PACKCOUNT>::pack_harvest_span(uint64_t uRowPack, unsigned uColumn) noexcept
+{                                                                                                  assert(uRowPack < get_row_pack_count()); assert(uColumn < get_column_count());
+   const uint8_t* puPackBase = rowpack_get(uRowPack, uColumn);
+   TYPE* pSource_ = reinterpret_cast<TYPE*>(const_cast<uint8_t*>(puPackBase));
+   return std::span<TYPE>(pSource_, (VALUESIZE / sizeof(TYPE)) * count_pack_s());
+}
+
+
+/** --------------------------------------------------------------------------- pack_harvest_span
+ * @brief Get a span of values from a pack for direct SIMD/data processing
+ * @tparam TYPE The value type to interpret the data as
+ * @param uRowPack The row pack index
+ * @param uColumn The column index
+ * @return std::span<const TYPE> Span covering PACKCOUNT elements
+ *
+ * @note This does NOT copy data - returns direct view of table memory
+ * @note Caller must ensure pack exists and column is valid
+*/
+template <std::size_t VALUESIZE, std::size_t PACKCOUNT>
+template <typename TYPE>
+inline std::span<const TYPE> table<VALUESIZE, PACKCOUNT>::pack_harvest_span(uint64_t uRowPack, unsigned uColumn) const noexcept
+{                                                                                                  assert(uRowPack < get_row_pack_count()); assert(uColumn < get_column_count()); assert(sizeof(TYPE) == VALUESIZE && "TYPE size must match VALUESIZE template parameter");
+   const uint8_t* puPackBase = rowpack_get(uRowPack, uColumn);
+   const TYPE* pSource_ = reinterpret_cast<const TYPE*>(puPackBase);
+   return std::span<const TYPE>(pSource_, count_pack_s());
+}
+
+/** --------------------------------------------------------------------------- pack_extract_iter
+ * @brief Extract elements from a pack into an output iterator
+ * @tparam VALUESIZE 
+ * @tparam PACKCOUNT 
+ * @param uRowPack 
+ * @param uColumn 
+ * @param itDestination Output iterator to write elements to
+ * @return Number of elements written to the output iterator
+ */
+template <std::size_t VALUESIZE, std::size_t PACKCOUNT>
+template <typename TYPE, typename OUTPUT_ITERATOR>
+inline std::size_t table<VALUESIZE, PACKCOUNT>::pack_extract_iter( uint64_t uRowPack, unsigned uColumn, OUTPUT_ITERATOR itDestination) const noexcept 
+{                                                                                                  assert(uRowPack < get_row_pack_count()); assert(uColumn < get_column_count()); assert(sizeof(TYPE) == VALUESIZE && "TYPE size must match VALUESIZE");
+   auto spanPack = pack_harvest_span<TYPE>(uRowPack, uColumn);
+   std::size_t uCount = 0; // Count of elements written to destination
+
+   for(auto it = spanPack.begin(); it != spanPack.end(); ++it) {
+      *itDestination = *it;
+      ++itDestination;
+      ++uCount;
+   }
+
+   return uCount;
+}
+
+/** --------------------------------------------------------------------------- pack_extract_if
+ * @brief Extract elements where predicate returns true (keep masked items)
+ * @param uRowPack Source pack index
+ * @param uColumn Source column index
+ * @param predicate Predicate returning true = KEEP, false = SKIP
+ * @param spanGather Destination span
+ * @return Number of elements written to spanGather
+*/
+template <std::size_t VALUESIZE, std::size_t PACKCOUNT>
+template <typename TYPE, typename PREDICATE>
+inline std::size_t table<VALUESIZE, PACKCOUNT>::pack_extract_if( uint64_t uRowPack, unsigned uColumn, PREDICATE&& predicate_, std::span<TYPE> spanGather) const noexcept
+{                                                                                                  assert(uRowPack < get_row_pack_count()); assert(uColumn < get_column_count()); assert(sizeof(TYPE) == VALUESIZE && "TYPE size must match VALUESIZE");
+   auto spanPack = pack_harvest_span<TYPE>(uRowPack, uColumn);
+   std::size_t uCount = 0; // Count of elements written to spanGather
+
+   for(std::size_t u = 0; u < spanPack.size() && uCount < spanGather.size(); ++u) {
+      // Allow predicate to optionally take index as first argument
+      if constexpr(requires(PREDICATE p, std::size_t u, TYPE v) { p(u, v); }) { // Predicate accepts (index, value)
+         if(predicate_(u, spanPack[u])) { spanGather[uCount++] = spanPack[u]; }
+      }
+      else {                                                                   // Predicate accepts (value) only
+         if(predicate_(spanPack[u])) { spanGather[uCount++] = spanPack[u]; }
+      }
+   }
+
+   return uCount;
+}
+
+/** --------------------------------------------------------------------------- pack_extract_if_iter
+ * @brief Extract elements where predicate returns true - writes to output iterator
+ * @param uRowPack Source pack index
+ * @param uColumn Source column index
+ * @param predicate_ Predicate returning true = KEEP, false = SKIP
+ * @param itDestination Output iterator (can be back_inserter(vector), front_inserter(list), begin(array), etc.)
+ * @return Number of elements written to destination
+ *
+ * @note Works with ANY output iterator - most flexible version
+ * @note Container manages memory - no need to pre-size or reserve
+ * @note Predicate can accept (value) or (index, value) - detected at compile time
+*/
+template <std::size_t VALUESIZE, std::size_t PACKCOUNT>
+template <typename TYPE, typename PREDICATE, typename OUTPUT_ITERATOR>
+inline std::size_t table<VALUESIZE, PACKCOUNT>::pack_extract_if_iter( uint64_t uRowPack, unsigned uColumn, PREDICATE&& predicate_, OUTPUT_ITERATOR itDestination) const noexcept
+{                                                                                                  assert(uRowPack < get_row_pack_count()); assert(uColumn < get_column_count()); assert(sizeof(TYPE) == VALUESIZE && "TYPE size must match VALUESIZE");
+   auto spanPack = pack_harvest_span<TYPE>(uRowPack, uColumn);
+   std::size_t uCount = 0; // Count of elements written to destination
+
+   for(std::size_t uIndex = 0; uIndex < spanPack.size(); ++uIndex)
+   {
+      // Allow predicate to optionally take index as first argument
+      if constexpr(requires(PREDICATE p, std::size_t uIndex, TYPE value) { p(uIndex, value); }) { // Predicate accepts (index, value)
+         if(predicate_(uIndex, spanPack[uIndex])) 
+         {
+            *itDestination++ = spanPack[uIndex];
+            ++uCount;
+         }
+      }
+      else {                                                                   // Predicate accepts (value) only
+         if(predicate_(spanPack[uIndex])) 
+         {
+            *itDestination++ = spanPack[uIndex];
+            ++uCount;
+         }
+      }
+   }
+
+   return uCount;
+}
+
+// ----------------------------------------------------------------------------
+// FREE FUNCTIONS - PACK GET METHODS
+// ----------------------------------------------------------------------------
+
+/** --------------------------------------------------------------------------- rowpack_get
+ * @brief Get pointer to the start of a row pack for a specific column
+ * @param table The table to access
+ * @param uRowPack The row pack index
+ * @param uColumn The column index
+ * @return Pointer to the start of the column data for this row pack
+ */
+template<std::size_t VALUESIZE, std::size_t PACKCOUNT>
+inline uint8_t* rowpack_get(table<VALUESIZE, PACKCOUNT>& table_, uint64_t uRowPack, unsigned uColumn) noexcept { assert(uRowPack < table_.get_row_pack_count()); assert(uColumn < table_.get_column_count());
+   auto puRowPackBase = table_.rowpack_get(uRowPack, uColumn);
+   return puRowPackBase;
+}
+
+/** --------------------------------------------------------------------------- pack_get_span
+ * @brief Get a span of values from a column pack for SIMD processing
+ * @tparam TYPE The value type to interpret the data as
+ * @param table The table to read from
+ * @param uRowPack The pack/block index (row / PACKCOUNT)
+ * @param uColumn The column index
+ * @return std::span<T> Contiguous values ready for SIMD operations
+ */
+template<typename TYPE, std::size_t VALUESIZE, std::size_t PACKCOUNT>
+inline std::span<TYPE> pack_get_span(table<VALUESIZE, PACKCOUNT>& table_, uint64_t uRowPack, unsigned uColumn) noexcept { assert(uRowPack < table_.get_row_pack_count()); assert(uColumn < table_.get_column_count()); assert(table_.size_value() == sizeof(TYPE) && "Value size mismatch");
+   uint8_t* puPackBase = table_.rowpack_get(uRowPack, uColumn);
+   TYPE* pvalue_ = reinterpret_cast<TYPE*>(puPackBase);
+   return std::span<TYPE>(pvalue_, table_.count_pack_s());
+}
+
+/** --------------------------------------------------------------------------- pack_get_span
+ * @brief Get a span of values from a column pack for SIMD processing
+ * @tparam TYPE The value type to interpret the data as
+ * @param table The table to read from
+ * @param uRowPack The pack/block index (row / PACKCOUNT)
+ * @param uColumn The column index
+ * @return std::span<T> Contiguous values ready for SIMD operations
+ */
+template<typename TYPE, std::size_t VALUESIZE, std::size_t PACKCOUNT>
+inline std::span<const TYPE> pack_get_span(const table<VALUESIZE, PACKCOUNT>& table_, uint64_t uRowPack, unsigned uColumn) noexcept { assert(uRowPack < table_.get_row_pack_count()); assert(uColumn < table_.get_column_count()); assert(table_.size_value() == sizeof(TYPE) && "Value size mismatch");
+   const uint8_t* puPackBase = table_.rowpack_get(uRowPack, uColumn);
+   const TYPE* pvalue_ = reinterpret_cast<const TYPE*>(puPackBase);
+   return std::span<const TYPE>(pvalue_, table_.count_pack_s());
+}
+
+
+// ----------------------------------------------------------------------------
+// FREE FUNCTIONS - PACK SET METHODS
+// ----------------------------------------------------------------------------
+
+/** ---------------------------------------------------------------------------
+ * @brief Set values in a pack from a source array
+ * @tparam TYPE The value type
+ * @param table The table to modify
+ * @param uRowPack The row pack index
+ * @param uColumn The column index
+ * @param pSource_ Source array of values (must have at least PACKCOUNT elements)
+ */
+template<typename TYPE, std::size_t VALUESIZE, std::size_t PACKCOUNT>
+inline void pack_set_values(table<VALUESIZE, PACKCOUNT>& table_, uint64_t uRowPack, unsigned uColumn, const TYPE* GD_RESTRICT pSource_) noexcept { ...
+   TYPE* GD_RESTRICT pDestination = reinterpret_cast<TYPE*>(rowpack_get(table_, uRowPack, uColumn));
+   std::memcpy(pDestination, pSource_, table_.count_pack_s() * sizeof(TYPE));
+}
+
+
+
+// ## @API [tag: table, simd, typealias] [description: default table types for common use cases]
+
+using table_4_4 = table<4, 4>;  // default table with 4 bytes per value and 4 values per pack
+using table_4_8 = table<4, 8>;  // default table with 4 bytes per value and 8 values per pack
+using table_4_16 = table<4, 16>;  // default table with 4 bytes per value and 16 values per pack
+using table_8_4 = table<8, 4>;  // default table with 8 bytes per value and 4 values per pack
+using table_8_8 = table<8, 8>;  // default table with 8 bytes per value and 8 values per pack
+
+
+
+_GD_TABLE_SIMD_END

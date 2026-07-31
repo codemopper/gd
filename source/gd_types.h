@@ -255,6 +255,15 @@ struct tag_xy {};             ///< x-y ordering, like Cartesian coordinates (x h
 struct tag_yx {};             ///< y-x ordering, transposed Cartesian coordinates
 
 // ----------------------------------------------------------------------------
+// ## size related tag dispatchers
+struct tag_size8 {};          ///< 8 bit value or some form of 8 bit size, like uint8_t or int8_t
+struct tag_size16 {};         ///< 16 bit value or some form of 16 bit size
+struct tag_size32 {};         ///< 32 bit value or some form of 32 bit size
+struct tag_size64 {};         ///< 64 bit value or some form of 64 bit size 
+struct tag_size128 {};        ///< 128 bit value or some form of 128 bit size 
+
+
+// ----------------------------------------------------------------------------
 // ## storage related tag dispatchers
 struct tag_storage_memory {};   ///< memory storage, like RAM
 struct tag_storage_disk {};     ///< disk storage, like HDD or SSD
@@ -630,6 +639,16 @@ namespace detail {
    {
       return hash_match_g( std::string_view(stringPattern), stringValue );
    }
+
+
+   // @API [tag: gd, size] [summary: find out size for value type]
+   constexpr bool is_size8_g(unsigned uType) { return (uType & eTypeGroupSize08) == eTypeGroupSize08; }
+   constexpr bool is_size16_g(unsigned uType) { return (uType & eTypeGroupSize16) == eTypeGroupSize16; }
+   constexpr bool is_size32_g(unsigned uType) { return (uType & eTypeGroupSize32) == eTypeGroupSize32; }
+   constexpr bool is_size64_g(unsigned uType) { return (uType & eTypeGroupSize64) == eTypeGroupSize64; }
+   constexpr bool is_size128_g(unsigned uType) { return (uType & eTypeGroupSize128) == eTypeGroupSize128; }
+   constexpr bool is_size256_g(unsigned uType) { return (uType & eTypeGroupSize256) == eTypeGroupSize256; }
+   constexpr bool is_size512_g(unsigned uType) { return (uType & eTypeGroupSize512) == eTypeGroupSize512; }
 }
 
 // ## helper methods used to check if type is of specific type
@@ -1442,6 +1461,17 @@ struct binary
 };
 
 
+// ============================================================================
+// =================================================================== CONCEPTS
+// ============================================================================
+
+/// Concept to constrain template to RangeContainers with trivially copyable elements
+template<typename CONTAINER>
+concept concept_ArrayContainer = requires(const CONTAINER & container_) {
+   { container_.data() } -> std::convertible_to<const typename CONTAINER::value_type*>;
+   { container_.size() } -> std::convertible_to<std::size_t>;
+   std::is_trivially_copyable_v<typename CONTAINER::value_type>;
+} && (!std::is_same_v<std::remove_cv_t<CONTAINER>, std::string> && !std::is_same_v<std::remove_cv_t<CONTAINER>, std::wstring>);
 
 
 #if defined(__clang__)

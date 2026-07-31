@@ -381,7 +381,8 @@ public:
    /// Number of rows memory is allocated for
    uint64_t get_reserved_row_count() const noexcept { return m_uReservedRowCount; }
    /// get allocated size in bytes for table
-   uint64_t get_reserved_size() const noexcept { return m_uReservedRowCount; }
+   uint64_t get_reserved_size() const noexcept { return m_uReservedRowCount * m_uRowSize + size_row_meta() * m_uReservedRowCount; }
+   /// Get number of rows with values
    uint64_t get_row_count( uint32_t uFlags ) const noexcept;
    /// Last valid row index where to insert cell values
    uint64_t get_row_back() const noexcept { assert( m_puData != nullptr ); return m_uRowCount - 1; }
@@ -392,7 +393,7 @@ public:
    const detail::columns* get_columns() const noexcept { return m_pcolumns; }
    void set_columns( detail::columns* pcolumns ) { assert( m_pcolumns == nullptr ); assert( pcolumns != nullptr ); m_pcolumns = pcolumns; m_pcolumns->add_reference(); }
 
-   // ## state methods, check state flags
+// @API [tag: state] [description: state methods, check state flags]
 
    bool is_null() const { return m_uFlags & (eTableFlagNull32|eTableFlagNull64); }
    bool is_null32() const { return m_uFlags & eTableFlagNull32; }
@@ -452,12 +453,12 @@ public:
    ///@}
 
    // ### access column or find index for column/columns
-   int column_find_index( const std::string_view& stringName ) const noexcept;
-   int column_find_index( const std::string_view& stringAlias, tag_alias ) const noexcept;
-   int column_find_index( const std::string_view& stringWildcard, tag_wildcard ) const noexcept;
-   unsigned column_get_index( const std::string_view& stringName ) const noexcept;
-   unsigned column_get_index( const std::string_view& stringAlias, tag_alias ) const noexcept;
-   unsigned column_get_index( const std::string_view& stringName, tag_wildcard ) const noexcept;
+   int column_find_index( std::string_view stringName ) const noexcept;
+   int column_find_index( std::string_view stringAlias, tag_alias ) const noexcept;
+   int column_find_index( std::string_view stringWildcard, tag_wildcard ) const noexcept;
+   unsigned column_get_index( std::string_view stringName ) const noexcept;
+   unsigned column_get_index( std::string_view stringAlias, tag_alias ) const noexcept;
+   unsigned column_get_index( std::string_view stringName, tag_wildcard ) const noexcept;
    std::vector<uint32_t> column_get_index( std::initializer_list< std::string_view > listName ) const noexcept;
    std::vector<uint32_t> column_get_index( const std::vector< std::string_view >& vectorName ) const noexcept;
    unsigned column_get_index_for_alias( const std::string_view& stringAlias ) const noexcept { return column_get_index( stringAlias, tag_alias{}); }
@@ -601,7 +602,7 @@ public:
    void row_set( uint64_t uRow, unsigned uFirst, const std::string_view& stringRowValue, char chSplit, tag_parse );
    void row_set( uint64_t uRow, const unsigned* puColumn, const std::string_view& stringRowValue, char chSplit, tag_parse );
    bool row_set( uint64_t uRow, unsigned uFirst, const std::string_view& stringRowValue, char chSplit, std::function< bool( std::vector<std::string>& vectorValue )> callback_, tag_parse );
-   bool row_set(uint64_t uRow, const unsigned* puColumn, const std::string_view& stringRowValue, char chSplit, std::function< bool( std::vector<std::string>& vectorValue )> callback_, tag_parse);
+   bool row_set( uint64_t uRow, const unsigned* puColumn, const std::string_view& stringRowValue, char chSplit, std::function< bool( std::vector<std::string>& vectorValue )> callback_, tag_parse);
 
    /// variadic templates for row_set
 
@@ -733,7 +734,7 @@ public:
    void cell_set( uint64_t uRow, const std::string_view& stringName, const gd::variant_view& variantviewValue );
    void cell_set( uint64_t uRow, const std::string_view& stringAlias, const gd::variant_view& variantviewValue, tag_alias );
    void cell_set_null( uint64_t uRow, unsigned uColumn );
-   void cell_set_null( uint64_t uRow, const std::string_view& stringName );
+   void cell_set_null( uint64_t uRow, std::string_view stringName );
    void cell_set_not_null( uint64_t uRow, unsigned uColumn );
    void cell_set( uint64_t uRow, unsigned uColumn, const gd::variant_view& variantviewValue, tag_convert );
    void cell_set( uint64_t uRow, unsigned uColumn, const gd::variant_view& variantviewValue, tag_adjust );
@@ -976,7 +977,7 @@ public:
 
 
 
-   // ## @API [tag: static] [description: static member methods]
+// ## @API [tag: static] [description: static member methods]
 public:
    /// Create columns object on heap
    static detail::columns* new_columns_s();
@@ -1248,7 +1249,7 @@ inline bool table::row_is_use( uint64_t uRow ) const noexcept { assert( uRow < m
  * @brief set all columns to null in row
  * @param uRow index to row where values are set to null
 */
-inline void table::row_set_null( uint64_t uRow ) { assert( uRow < m_uReservedRowCount ); assert( is_null() == true );
+inline void table::row_set_null( uint64_t uRow ) {                                                 assert( uRow < m_uReservedRowCount ); assert( is_null() == true );
    auto puRow = row_get_null( uRow );
 
    if( is_null32() ) *(uint32_t*)puRow =((uint32_t)-1);
@@ -1330,7 +1331,7 @@ inline void table::cell_set_null( uint64_t uRow, unsigned uColumn ) { assert( uR
  * @param uRow row where cell is
  * @param stringName cell column name
 */
-inline void table::cell_set_null( uint64_t uRow, const std::string_view& stringName ) { assert( uRow < m_uReservedRowCount ); assert( m_uFlags & (eTableFlagNull32|eTableFlagNull64) );
+inline void table::cell_set_null( uint64_t uRow, std::string_view stringName ) {                   assert( uRow < m_uReservedRowCount ); assert( m_uFlags & (eTableFlagNull32|eTableFlagNull64) );
    unsigned uColumnIndex = column_get_index( stringName );
    cell_set_null( uRow, uColumnIndex);
 }
