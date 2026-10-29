@@ -521,6 +521,9 @@ public:
       gd::variant  as_variant() const { return get_variant(); }
       gd::variant_view as_variant_view() const { return get_variant_view(); }
       std::string_view as_string_view() const { return get_string_view(); }
+      std::span<uint8_t> as_binary_view() const { return get_binary_view(); }
+      void* as_pointer() const { return get_raw_pointer(); }
+
 
       bool         get_bool() const;
       int          get_int() const;
@@ -536,6 +539,7 @@ public:
       value        get_value() { return m_unionValue; }
       const value& get_value() const { return m_unionValue; }
       std::string_view get_string_view() const { return arguments::get_variant_view_s(*this).as_string_view(); }
+      std::span<uint8_t> get_binary_view() const { return arguments::get_variant_view_s(*this).as_binary_view(); }
 
       std::string  to_string() const { return get_string(); }
       std::string  to_ut8() const { return get_utf8(); }
@@ -669,7 +673,8 @@ public:
       gd::variant as_variant() const { return derived().get_argument().as_variant(); }
       gd::variant_view as_variant_view() const { return derived().get_argument().as_variant_view(); }
       std::string_view as_string_view() const { return derived().get_argument().as_string_view(); }
-   
+      void* as_pointer() const { return derived().get_argument().as_pointer(); }
+
       bool get_bool() const { return derived().get_argument().get_bool(); }
       int get_int() const { return derived().get_argument().get_int(); }
       unsigned int get_uint() const { return derived().get_argument().get_uint(); }
@@ -1567,6 +1572,8 @@ public:
    static std::vector<argument> get_argument_all_s(const_pointer pBegin, const_pointer pEnd, std::string_view stringName);
    static std::vector<gd::variant_view> get_argument_all_s(const_pointer pBegin, const_pointer pEnd, std::string_view stringName, tag_view);
    static std::vector<gd::variant_view> get_argument_section_s(const_pointer pBegin, const_pointer pEnd, std::string_view stringName, tag_view);
+   static std::vector<std::pair<std::string_view, gd::variant_view>> get_argument_all_s(const_pointer pBegin, const_pointer pEnd, tag_view, tag_pair);
+   static std::vector<std::pair<std::string_view, gd::variant_view>> get_argument_all_s(const arguments& arguments_);
 
    /// ## move methods
    /// move pointer to next value in buffer
