@@ -4,14 +4,19 @@
  * @file gd_table.h
  *
  * @brief Common table logic. Include this in all table related functionality.
+ * 
+ * Sections — double-click a marker, then Ctrl+F3 / F3 to jump.
  *
-
+ * cell__                        cell<TABLE> struct, represents a single cell in a table, provides type conversion, assignment, and access to cell value
+ * cell_reference__              cell_reference struct, Excel-style cell address helper (A1/R1C1) for table cell indexing
+ *
 | Object         | Key Methods / Members (Examples)                                   | Description                                                                                |
 |----------------|--------------------------------------------------------------------|-----------------------------------------------------------------------------------------------|
 | cell<TABLE>    | operator=, operator T(), as_variant(...), m_ptable, m_uRow, m_uColumn | Represents a single cell in a table, provides type conversion, assignment, and access to cell value. |
 | columns<TABLE> | operator[], size(), empty(), begin(), end(), m_ptable              | Container for columns in a table, supports iteration and access by index.                     |
 | row<TABLE>     | operator[], get_row(), cell_get_variant_view(...), cell_set(...), size(), m_uRow, m_ptable | Represents a single row, allows access to cells by index or name, and setting cell values.     |
 | rows<TABLE>    | operator[], size(), empty(), begin(), end(), m_ptable           | Container for rows, supports iteration and access by index.                                   |
+| cell_reference | try_parse_a1_s(...), try_parse_r1c1_s(...), parse_s(...), m_uRow, m_uColumn | Excel-style cell address helper (A1/R1C1) for table cell indexing. |
 | range          | contains(...), intersects(...), normalize(), empty(), count(), rows(), cells(), m_uRow1, m_uRow2, m_uColumn1, m_uColumn2 | Represents a rectangular area in a table, provides range operations and iterators.            |
 | page           | first(), last(), next(), goto_first_page(), goto_last_page(), get_page_count(), set_flags(...), m_uPage, m_uPageSize, m_uHeader, m_uFooter, m_uRowCount | Manages paging of rows, tracks page boundaries, flags, and navigation.                        |
 | names          | add(...), get(...), reserve(...), resize(...), clear(), size(), empty(), m_pbBufferNames | Manages a buffer of constant strings (e.g., column names), supports adding and retrieving names. |
@@ -42,6 +47,7 @@ inline constexpr uint8_t uTailetextMarker_d = 0x01;
 #include <cassert>
 #include <cmath>
 #include <cstring>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -203,10 +209,201 @@ struct tag_reference {};
 
 using tag_variadic = gd::types::tag_variadic;
 
+template<typename T>
+concept is_table_cell = requires( const T& c ) {
+   typename T::table_type;                                  // identity marker
+   { c.get() } -> std::convertible_to<gd::variant_view>;
+   { c.m_uRow } -> std::convertible_to<uint64_t>;
+   { c.m_uColumn } -> std::convertible_to<unsigned>;
+};
+
+
+/** -------------------------------------------------------------------------- 
+ * \brief cell address in table, supports A1 and R1C1 parsing
+ * 
+ * @API [name: cell_reference] [description: Excel-style cell address helper (A1/R1C1) for table cell indexing] [jump: cell_reference__]
+ */
+struct cell_reference
+{
+   cell_reference() : m_uRow(uint64_t(-1)), m_uColumn(unsigned(-1)) {}
+   cell_reference( uint64_t uRow, unsigned uColumn ) : m_uRow(uRow), m_uColumn(uColumn) {}
+
+   uint64_t row() const noexcept { return m_uRow; }    ///< zero-based row index
+   unsigned column() const noexcept { return m_uColumn; } ///< zero-based column index
+
+   bool empty() const noexcept { return m_uRow == uint64_t(-1) || m_uColumn == unsigned(-1); }
+
+   /// convert cell_reference to A1 style string, returns empty string if cell_reference is empty
+   std::string to_string_a1() const noexcept { return to_a1_s(*this); }
+   /// convert cell_reference to R1C1 style string, returns empty string if cell_reference is empty
+   std::string to_string_r1c1() const noexcept { return to_r1c1_s(*this); }
+
+   static bool parse_s( std::string_view stringCellReference, cell_reference& cellreferenceValue ) noexcept {
+      return parse_r1c1_s( stringCellReference, cellreferenceValue ) || parse_a1_s( stringCellReference, cellreferenceValue );
+   }
+
+   /// ------------------------------------------------------------------------
+   /// parse A1 or R1C1 style cell reference, returns false if parsing fails
+   static bool parse_a1_s( std::string_view stringCellReference, cell_reference& cellreferenceValue ) noexcept {
+      cellreferenceValue = {};
+      if( stringCellReference.empty() ) return false;
+
+      // ## parse column letters ..............................................
+      std::size_t uIndex = 0;
+      uint64_t uColumnOneBased = 0;
+      while( uIndex < stringCellReference.size() )
+      {
+         char iCharacter = stringCellReference[uIndex];
+         if( iCharacter >= 'a' && iCharacter <= 'z' ) iCharacter = static_cast<char>( iCharacter - 'a' + 'A' );
+         if( iCharacter < 'A' || iCharacter > 'Z' ) break;
+
+         const uint64_t uDigit = static_cast<uint64_t>(iCharacter - 'A' + 1);
+         if( uColumnOneBased > ( std::numeric_limits<uint64_t>::max() - uDigit ) / 26ULL ) return false;
+         uColumnOneBased = (uColumnOneBased * 26ULL) + uDigit;
+         ++uIndex;
+      }
+
+      if( uIndex == 0 || uIndex >= stringCellReference.size() ) return false;
+
+      // ## parse row number ..................................................
+      uint64_t uRowOneBased = 0;
+      while( uIndex < stringCellReference.size() )
+      {
+         const char iCharacter = stringCellReference[uIndex];
+         if( iCharacter < '0' || iCharacter > '9' ) return false;
+
+         const uint64_t uDigit = static_cast<uint64_t>(iCharacter - '0');
+         if( uRowOneBased > ( std::numeric_limits<uint64_t>::max() - uDigit ) / 10ULL ) return false;
+         uRowOneBased = (uRowOneBased * 10ULL) + uDigit;
+         ++uIndex;
+      }
+
+      // ## Validation of row and column numbers .............................
+      if( uRowOneBased == 0 || uColumnOneBased == 0 ) return false;
+      if( (uColumnOneBased - 1ULL) > static_cast<uint64_t>( (std::numeric_limits<unsigned>::max)() ) ) return false;
+
+      cellreferenceValue = { uRowOneBased - 1ULL, static_cast<unsigned>(uColumnOneBased - 1ULL) };
+      return true;
+   }
+
+   /// ------------------------------------------------------------------------
+   /// parse R1C1 style cell reference, returns false if parsing fails
+   static bool parse_r1c1_s( std::string_view stringCellReference, cell_reference& cellreferenceValue ) noexcept {
+      cellreferenceValue = {}; // reset to empty
+      if( stringCellReference.size() < 4 ) return false;
+
+      // R1C1 style cell reference, starts with R or r, followed by row number, then C or c, followed by column number
+      auto to_upper_ = []( char iCharacter ) -> char {
+         if( iCharacter >= 'a' && iCharacter <= 'z' ) return static_cast<char>( iCharacter - 'a' + 'A' );
+         return iCharacter;
+      };
+
+      // ## parse R1C1 style cell reference ..................................
+      std::size_t uIndex = 0;
+      if( to_upper_(stringCellReference[uIndex]) != 'R' ) return false;
+      ++uIndex;
+
+      // ## parse row number..................................................
+      uint64_t uRowOneBased = 0; // row number is 1 based, so 0 is invalid
+      while( uIndex < stringCellReference.size() )
+      {
+         const char iCharacter = stringCellReference[uIndex];
+         if( iCharacter < '0' || iCharacter > '9' ) break;
+         const uint64_t uDigit = static_cast<uint64_t>(iCharacter - '0');
+         if( uRowOneBased > ( std::numeric_limits<uint64_t>::max() - uDigit ) / 10ULL ) return false;
+         uRowOneBased = (uRowOneBased * 10ULL) + uDigit;
+         ++uIndex;
+      }
+
+      if( uRowOneBased == 0 || uIndex >= stringCellReference.size() || to_upper_(stringCellReference[uIndex]) != 'C' ) return false;
+      ++uIndex;
+      if( uIndex >= stringCellReference.size() ) return false;
+
+      // ## parse column number ..............................................
+      uint64_t uColumnOneBased = 0; // column number is 1 based, so 0 is invalid
+      while( uIndex < stringCellReference.size() )
+      {
+         const char iCharacter = stringCellReference[uIndex];
+         if( iCharacter < '0' || iCharacter > '9' ) return false;
+         const uint64_t uDigit = static_cast<uint64_t>(iCharacter - '0');
+         if( uColumnOneBased > ( std::numeric_limits<uint64_t>::max() - uDigit ) / 10ULL ) return false;
+         uColumnOneBased = (uColumnOneBased * 10ULL) + uDigit;
+         ++uIndex;
+      }
+
+      // ## Validation of row and column numbers
+      if( uColumnOneBased == 0 ) return false;
+      if( (uColumnOneBased - 1ULL) > static_cast<uint64_t>( (std::numeric_limits<unsigned>::max)() ) ) return false;
+
+      cellreferenceValue = { uRowOneBased - 1ULL, static_cast<unsigned>(uColumnOneBased - 1ULL) }; // convert to zero based
+      return true;
+   }
+
+   /// ------------------------------------------------------------------------
+   /// parse A1 or R1C1 style cell reference, returns empty cell_reference if parsing fails
+   static cell_reference parse_s( std::string_view stringCellReference ) noexcept {
+      cell_reference cellreferenceValue;
+      if( parse_s( stringCellReference, cellreferenceValue ) ) return cellreferenceValue;
+      return {};
+   }
+
+   /// ------------------------------------------------------------------------
+   /// parse A1 style cell reference, returns empty cell_reference if parsing fails
+   static cell_reference parse_a1_s( std::string_view stringCellReference ) noexcept {
+      cell_reference cellreferenceValue;
+      if( parse_a1_s( stringCellReference, cellreferenceValue ) ) return cellreferenceValue;
+      return {};
+   }
+
+   /// ------------------------------------------------------------------------
+   /// parse R1C1 style cell reference, returns empty cell_reference if parsing fails
+   static cell_reference parse_r1c1_s( std::string_view stringCellReference ) noexcept {
+      cell_reference cellreferenceValue;
+      if( parse_r1c1_s( stringCellReference, cellreferenceValue ) ) return cellreferenceValue;
+      return {};
+   }
+
+   /// ------------------------------------------------------------------------
+   /// convert cell_reference to A1 style string, returns empty string if cell_reference is empty
+   static std::string to_a1_s( cell_reference cell_ ) noexcept {
+      if(cell_.empty()) return {};
+      std::string stringResult;
+      uint64_t uColumn = static_cast<uint64_t>(cell_.column()) + 1;
+      while(uColumn > 0) {
+         --uColumn;
+         stringResult.insert(stringResult.begin(), static_cast<char>('A' + uColumn % 26));
+         uColumn /= 26;
+      }
+      return stringResult + std::to_string(cell_.row() + 1);
+   }
+
+   /// ------------------------------------------------------------------------
+   /// convert cell_reference to R1C1 style string, returns empty string if cell_reference
+   static std::string to_r1c1_s(cell_reference cell_) noexcept {
+      if(cell_.empty()) return {};
+      return "R" + std::to_string(cell_.row() + 1) + "C" + std::to_string(cell_.column() + 1);
+   }
+
+
+   uint64_t m_uRow;    ///< zero based row index
+   unsigned m_uColumn; ///< zero based column index
+};
+
+namespace literals {
+   inline cell_reference operator "" _a1( const char* pbszCellReference, std::size_t uLength ) noexcept {
+      return cell_reference::parse_a1_s( std::string_view{ pbszCellReference, uLength } );
+   }
+
+   inline cell_reference operator "" _r1c1( const char* pbszCellReference, std::size_t uLength ) noexcept {
+      return cell_reference::parse_r1c1_s( std::string_view{ pbszCellReference, uLength } );
+   }
+}
+
+
 /**
  * \brief wrapper for cell objects owned by table
  *
- *
+ * @API [name: cell] [description: wrapper for cell objects owned by table] [jump: cell__]
  */
 template<typename TABLE> 
 struct cell
@@ -215,6 +412,15 @@ struct cell
    cell( TABLE* ptable, uint64_t uRow, unsigned uColumn ): m_ptable(ptable), m_uRow(uRow), m_uColumn(uColumn) { assert( m_ptable != nullptr ); assert( m_uRow < m_ptable->get_row_count() ); assert( m_uColumn < m_ptable->get_column_count() ); }
 
    cell& operator=( const gd::variant_view& variantviewValue ) { m_ptable->cell_set( m_uRow, m_uColumn, variantviewValue, tag_convert{} ); return *this; }
+   cell& operator=( std::initializer_list<gd::variant_view> listValue ) {
+      unsigned uColumn = m_uColumn;
+      for( const auto& v_ : listValue ) m_ptable->cell_set( m_uRow, uColumn++, v_, tag_convert{} );
+      return *this;
+   }
+
+   template<typename OTHER_TABLE>
+      requires is_table_cell<cell<OTHER_TABLE>>
+   cell& operator=( const cell<OTHER_TABLE>& o ) { m_ptable->cell_set( m_uRow, m_uColumn, o.get(), tag_convert{}); }
 
    operator bool() const      { return m_ptable->cell_get_variant_view( m_uRow, m_uColumn ); }
    operator int8_t() const    { return m_ptable->cell_get_variant_view( m_uRow, m_uColumn ); }
@@ -239,8 +445,12 @@ struct cell
    operator std::wstring() const { return m_ptable->cell_get_variant_view( m_uRow, m_uColumn ).as_wstring(); }
    operator std::string_view() const { return m_ptable->cell_get_variant_view( m_uRow, m_uColumn ).as_string_view(); }
 
+   gd::variant_view get() const { return m_ptable->cell_get_variant_view( m_uRow, m_uColumn ); }
    gd::variant as_variant( const std::string_view& stringType );
    gd::variant as_variant( unsigned uType );
+
+   cell& set_null()           { m_ptable->cell_set_null( m_uRow, m_uColumn ); return *this; }
+   cell& set_not_null()       { m_ptable->cell_set_not_null( m_uRow, m_uColumn ); return *this; }
 
    
    //operator gd::variant_view() const { return m_ptable->cell_get_variant_view( m_uRow, m_uColumn ); }
@@ -560,11 +770,10 @@ struct range
 //@}
 
 // ## attributes --------------------------------------------------------------
-   uint64_t m_uRow1;
-   uint32_t m_uColumn1;
-   uint64_t m_uRow2;
-   uint32_t m_uColumn2;
-
+   uint64_t m_uRow1 = uint64_t(-1);   ///< top left row index
+   uint32_t m_uColumn1 = uint32_t(-1);///< top left column index
+   uint64_t m_uRow2 = uint64_t(-1);   ///< bottom right row index
+   uint32_t m_uColumn2 = uint32_t(-1);///< bottom right column index
 // ## free functions ----------------------------------------------------------
 
 };
@@ -670,8 +879,9 @@ struct page
 };
 
 inline uint64_t page::get_page_count() const noexcept {                                            assert( m_uPageSize != 0 ); 
-   if( m_uRowCount < m_uPageSize ) return 1;
-   return (uint64_t)ceil( get_row_count() / m_uPageSize ); 
+   const uint64_t uRowCount = get_row_count();
+   if(m_uPageSize == 0 || uRowCount == 0) return 1;
+   return (uRowCount + m_uPageSize - 1) / m_uPageSize;
 }
 
 
