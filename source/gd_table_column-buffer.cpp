@@ -4136,60 +4136,17 @@ void table_column_buffer::plant( unsigned uColumn, const gd::variant_view& varia
 */
 void table_column_buffer::swap( uint64_t uRow1, uint64_t uRow2 )
 {                                                                                                  assert( uRow1 != uRow2 ); assert( uRow1 < get_row_count() ); assert( uRow2 < get_row_count() );
-   const unsigned u128Length = (sizeof(uint64_t) + sizeof(uint64_t));          // 128 bit length in bytes
+   // ## swap row data, byte-wise swap is alias-safe and auto-vectorized by the compiler
+   auto pRow1 = row_get(uRow1);
+   auto pRow2 = row_get(uRow2);
+   std::swap_ranges(pRow1, pRow1 + m_uRowSize, pRow2);
 
-   unsigned uCount128 = m_uRowSize / (sizeof(uint64_t) + sizeof(uint64_t)); // number of 128 bit sections
-   unsigned uTail = m_uRowSize % (sizeof(uint64_t) + sizeof(uint64_t));     // trailing 32 bit values (each row is allways 4 byte aligned)
-
-   auto pRow1 = row_get( uRow1 );                                              // pointer to first row data
-   auto pRow2 = row_get( uRow2 );                                              // pointer to second row data
-
-   // ## swap data between rows
-   for( unsigned u = 0; u < uCount128; u++ )
+   // ## if metadata for row then switch meta between rows ....................
+   if (is_rowmeta() == true)
    {
-#ifdef GD_X86X
-      __m128i iSwapData = _mm_loadu_si128( reinterpret_cast<const __m128i* >( pRow1 ) );
-      _mm_storeu_si128( reinterpret_cast<__m128i* >(pRow1), _mm_loadu_si128( reinterpret_cast<const __m128i* >( pRow2 ) ) );
-      _mm_storeu_si128( reinterpret_cast<__m128i* >(pRow2), iSwapData );
-#else
-      int64_t iSwapData = *(int64_t*)pRow1;
-      *(int64_t*)pRow1 = *(int64_t*)pRow2;
-      *(int64_t*)pRow2 = iSwapData;
-      int64_t iSwapData2 = *(int64_t*)(pRow1 + sizeof(int64_t));
-      *(int64_t*)(pRow1 + sizeof(int64_t)) = *(int64_t*)(pRow2 + sizeof(int64_t));
-      *(int64_t*)(pRow2 + sizeof(int64_t)) = iSwapData2;
-#endif
-      pRow1 += u128Length;
-      pRow2 += u128Length;
-   }
-                                                                                                   assert( uTail < 16 ); assert( (uTail % 4) == 0 );
-   while( uTail > 0 )
-   {
-      uint32_t uSwapData = *(uint32_t*)pRow1;
-      *(uint32_t*)pRow1 = *(uint32_t*)pRow2;
-      *(uint32_t*)pRow2 = uSwapData;
-
-      pRow1 += sizeof( uint32_t );
-      pRow2 += sizeof( uint32_t );
-      uTail -= sizeof( uint32_t );
-   }
-
-   // ## if metadata for row then switch meta between rows
-   if( is_rowmeta() == true )
-   {
-      pRow1 = row_get_meta( uRow1 );                                           // pointer to first meta data for row
-      pRow2 = row_get_meta( uRow2 );                                           // pointer to second meta data for row
-      uTail = m_uRowMetaSize;                                                                      assert( uTail < 16 ); assert( (uTail % 4) == 0 );
-      while( uTail > 0 )
-      {
-         uint32_t uSwapData = *(uint32_t*)pRow1;                               // read 4 byte
-         *(uint32_t*)pRow1 = *(uint32_t*)pRow2;                                // move 4 byte
-         *(uint32_t*)pRow2 = uSwapData;                                        // store 4 bytes read
-
-         pRow1 += sizeof( uint32_t );
-         pRow2 += sizeof( uint32_t );
-         uTail -= sizeof( uint32_t );
-      }
+      auto pMeta1 = row_get_meta(uRow1);
+      auto pMeta2 = row_get_meta(uRow2);
+      std::swap_ranges(pMeta1, pMeta1 + m_uRowMetaSize, pMeta2);
    }
 }
 
@@ -4228,6 +4185,80 @@ void table_column_buffer::sort(unsigned uColumn, bool bAscending, uint64_t uFrom
       uint64_t uSource = vectorIndex[uPosition];
       while(uSource - uFrom < uPosition) uSource = vectorIndex[uSource - uFrom]; // follow already moved rows
       if(uSource - uFrom != uPosition) swap(uFrom + uPosition, uSource);
+   }
+}
+
+/** ---------------------------------------------------------------------------
+ * @brief Sort a range of rows on one column by caching the key values and gathering rows in sorted order.
+ *
+ * The key for each row is read once into a vector together with the row index, and that vector is
+ * sorted with `std::stable_sort`. This avoids reading the cell (column lookup, null check, variant
+ * construction) on every comparison. The sorted order is then applied by copying the rows, in order,
+ * into a temporary buffer and copying that buffer back over the range in one block. This gives sequential
+ * memory access instead of swapping whole rows along permutation cycles.
+ *
+ * @note Keys are not allowed to be null, same as the other sort methods. Rows with equal values keep their relative order.
+ *
+ * @param uColumn Index of the column to sort on
+ * @param bAscending `true` to sort ascending, `false` to sort descending
+ * @param uFrom Index of the first row in the range to sort
+ * @param uCount Number of rows to sort, starting at `uFrom`
+ * @param tag_sort_key Tag used to select this key caching sort overload
+ */
+void table_column_buffer::sort( unsigned uColumn, bool bAscending, uint64_t uFrom, uint64_t uCount, tag_sort_key )
+{                                                                                                  assert( uColumn < get_column_count() ); assert( (uFrom + uCount) <= get_row_count() );
+   if( uCount < 2 ) return;
+
+   // ## cache key and row index, the key is read once for each row ...........
+   std::vector< std::pair< gd::variant_view, uint64_t > > vectorKey;
+   vectorKey.reserve(uCount);
+
+   for( uint64_t uRow = uFrom, uEnd = uFrom + uCount; uRow < uEnd; uRow++ )
+   {                                                                                                assert( cell_is_null()( uRow, uColumn ) == false ); // keys are not allowed to be null
+      vectorKey.emplace_back( cell_get_variant_view( uRow, uColumn, tag_raw{}), uRow);              
+   }
+
+
+   // ## sort keys, type is the same for all keys so select comparator once
+   auto uType = vectorKey.front().first.type_number();
+
+   auto sort_ = [&vectorKey, bAscending](auto&& compare_)
+      {
+         if(bAscending == true) { std::stable_sort(vectorKey.begin(), vectorKey.end(), [&compare_](const auto& pairLeft, const auto& pairRight) { return compare_(pairLeft.first, pairRight.first); }); }
+         else { std::stable_sort(vectorKey.begin(), vectorKey.end(), [&compare_](const auto& pairLeft, const auto& pairRight) { return compare_(pairRight.first, pairLeft.first); }); }
+      };
+
+   switch (uType)
+   {
+   case gd::types::eTypeNumberInt32:  sort_([](const auto& v1, const auto& v2) { return v1.m_V.int32 < v2.m_V.int32; });  break;
+   case gd::types::eTypeNumberUInt32: sort_([](const auto& v1, const auto& v2) { return v1.m_V.uint32 < v2.m_V.uint32; });  break;
+   case gd::types::eTypeNumberInt64:  sort_([](const auto& v1, const auto& v2) { return v1.m_V.int64 < v2.m_V.int64; });  break;
+   case gd::types::eTypeNumberUInt64: sort_([](const auto& v1, const auto& v2) { return v1.m_V.uint64 < v2.m_V.uint64; }); break;
+   case gd::types::eTypeNumberDouble: sort_([](const auto& v1, const auto& v2) { return v1.m_V.d < v2.m_V.d; });      break;
+   default:                           sort_([](const auto& v1, const auto& v2) { return v1.less(v2, gd::variant_type::tag_same_type{}); }); break;
+   }
+
+   // ## one temporary buffer, used first for the rows and then for the row meta data
+   uint64_t uBufferSize = uCount * m_uRowSize;
+   if (is_rowmeta() == true) { uBufferSize = std::max(uBufferSize, uCount * m_uRowMetaSize); }
+
+   auto pData = std::make_unique_for_overwrite<uint8_t[]>(uBufferSize);
+
+   // ## gather rows in sorted order, keys are not used after this point
+   for (uint64_t uPosition = 0; uPosition < uCount; uPosition++)
+   {
+      memcpy(pData.get() + (uPosition * m_uRowSize), row_get(vectorKey[uPosition].second), m_uRowSize);
+   }
+   memcpy(row_get(uFrom), pData.get(), uCount * m_uRowSize);
+
+   // ## same for meta data, reusing the buffer
+   if (is_rowmeta() == true)
+   {
+      for (uint64_t uPosition = 0; uPosition < uCount; uPosition++)
+      {
+         memcpy(pData.get() + (uPosition * m_uRowMetaSize), row_get_meta(vectorKey[uPosition].second), m_uRowMetaSize);
+      }
+      memcpy(row_get_meta(uFrom), pData.get(), uCount * m_uRowMetaSize);
    }
 }
 
