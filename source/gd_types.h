@@ -133,6 +133,7 @@ struct tag_class {};          ///< class is used in some form, like a class name
 struct tag_code {};           ///< code is used in some form, like a reference code
 struct tag_color {};          ///< color used in some form
 struct tag_column {};         ///< column is used in some form, like table columns
+struct tag_command {};        ///< command is used in some form, like a short command value
 struct tag_comment {};        ///< comment is used in some form, like user notes
 struct tag_date {};           ///< date is used in some form
 struct tag_description {};    ///< description is used in some form
@@ -152,6 +153,7 @@ struct tag_name {};           ///< name is used in some form
 struct tag_priority {};       ///< priority is used in some form, like high/low
 struct tag_reference {};      ///< reference is used in some form, like a pointer or link
 struct tag_role {};           ///< role is used in some form, like user role or permission
+struct tag_same {};           ///< same (type, value or something else) is used in some form, like matching types
 struct tag_state {};          ///< state is used in some form, like current condition
 struct tag_status {};         ///< status is used in some form, like active/inactive
 struct tag_success {};        ///< success is used in some form
@@ -265,20 +267,23 @@ struct tag_size128 {};        ///< 128 bit value or some form of 128 bit size
 
 // ----------------------------------------------------------------------------
 // ## storage related tag dispatchers
-struct tag_storage_memory {};   ///< memory storage, like RAM
-struct tag_storage_disk {};     ///< disk storage, like HDD or SSD
-struct tag_storage_cloud {};    ///< cloud storage, like AWS S3 or Azure Blob
-struct tag_storage_cache {};    ///< cache storage, like in-memory cache or disk cache
+struct tag_storage_memory {};  ///< memory storage, like RAM
+struct tag_storage_disk {};    ///< disk storage, like HDD or SSD
+struct tag_storage_cloud {};   ///< cloud storage, like AWS S3 or Azure Blob
+struct tag_storage_cache {};   ///< cache storage, like in-memory cache or disk cache
 struct tag_storage_temporary {};///< temporary storage, like temp files or in-memory temp data
 struct tag_storage_permanent {};///< permanent storage, like database or long-term files
-struct tag_storage_database {}; ///< database storage, like SQL or NoSQL databases
+struct tag_storage_database {};///< database storage, like SQL or NoSQL databases
 
 
 
 
 // ----------------------------------------------------------------------------
 // ## operation related tag dispatchers
+struct tag_canonical {};      ///< canonical is used in some form, like canonical form or canonical representation
+struct tag_filter {};         ///< filter is used in some form, like filtering data
 struct tag_raw {};            ///< do not perform any smart operations, just raw data
+struct tag_strip {};          ///< strip is used in some form, like stripping whitespace or characters
 
 
 // ----------------------------------------------------------------------------
