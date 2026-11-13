@@ -934,6 +934,18 @@ arguments::arguments(std::pair<std::string_view, gd::variant> pairArgument)
 }
 
 /** ---------------------------------------------------------------------------
+ * @brief Constructs an arguments object from a vector of string-variant_view pairs with a tag_view.
+ * @param listPair A vector of pairs containing string views and gd::variant_view values.
+ * @param tag_view A tag indicating the use of variant_view (distinguishes constructor overload).
+ * Initializes the object by appending each pair from the vector using the tag_view overload.
+ */
+arguments::arguments(std::vector<std::pair<std::string_view, gd::variant_view>> listPair, tag_view)
+{
+   zero();
+   for(auto it : listPair) append_argument(it, tag_view{});
+}
+
+/** ---------------------------------------------------------------------------
 * @brief Constructs an arguments object from an initializer list and another arguments object.
 *
 * appending key-value pairs from the provided initializer list, and appending all elements from another arguments object.
@@ -1999,9 +2011,9 @@ arguments::const_pointer arguments::find(std::string_view stringName) const
 {
    for( auto pPosition = next(); pPosition != nullptr; pPosition = next(pPosition) )
    {
-      if( arguments::is_name_s(pPosition) == true )
+      if( is_name_s(pPosition) == true )
       {
-         auto key_ = arguments::get_name_s(pPosition);
+         const auto key_ = get_name_s(pPosition);
          if( key_ == stringName ) return pPosition;
       }
    }
@@ -2516,6 +2528,7 @@ bool arguments::reserve(uint64_t uCount)
 
       uBufferSize -= sizeof( buffer );                                         // decrease actual buffer data size with buffer, first in buffer is tha class buffer
       m_pbuffer->buffer_size( uBufferSize );
+      m_pbuffer->set_owner();
 
       return true;
    }
@@ -3268,6 +3281,56 @@ std::vector<gd::variant_view> arguments::get_argument_section_s(const_pointer pB
    return vectorArgument;
 }
 
+/** ---------------------------------------------------------------------------
+ * Extracts all arguments from a data range into a vector of name-value pairs.
+ * Iterates through the range between pBegin and pEnd, parsing named and unnamed arguments.
+ * Named arguments are paired with their values, while unnamed arguments use an empty name.
+ * @param {const_pointer} pBegin - Starting pointer of the data range to parse.
+ * @param {const_pointer} pEnd - Ending pointer of the data range (exclusive).
+ * @param {tag_view} tag_view - Tag for overload resolution, typically an empty struct.
+ * @param {tag_pair} tag_pair - Tag for overload resolution, typically an empty struct.
+ * @returns {std::vector<std::pair<std::string_view, gd::variant_view>>} 
+ *          A vector of pairs where each pair contains an optional name (std::string_view) 
+ *          and a value (gd::variant_view). Unnamed arguments have an empty name.
+ */
+std::vector<std::pair<std::string_view, gd::variant_view>> arguments::get_argument_all_s(const_pointer pBegin, const_pointer pEnd, tag_view, tag_pair) 
+{
+   std::vector<std::pair<std::string_view, gd::variant_view>> vectorArgument;
+
+   const_pointer pPosition = pBegin;
+   while(pPosition < pEnd) 
+   {
+      if(is_name_s(pPosition)) 
+      {
+         std::string_view stringName = get_name_s(pPosition);
+         gd::variant_view value_ = get_argument_s(pPosition).as_variant_view();
+         vectorArgument.emplace_back(stringName, value_);
+      }
+      else
+      {
+         gd::variant_view value_ = get_argument_s(pPosition).as_variant_view();
+         vectorArgument.emplace_back(std::string_view(), value_);
+      }
+      pPosition = next_s(pPosition);
+   }
+
+   return vectorArgument;
+}
+
+
+/** ---------------------------------------------------------------------------
+ * Extracts all arguments from an arguments object into a vector of name-value pairs.
+ * @param {const arguments&} arguments_ - The arguments object to extract from.
+ * @returns {std::vector<std::pair<std::string_view, gd::variant_view>>}
+ *          A vector of pairs where each pair contains an optional name (std::string_view)
+ *          and a value (gd::variant_view). Unnamed arguments have an empty name.
+ */
+std::vector<std::pair<std::string_view, gd::variant_view>> arguments::get_argument_all_s(const arguments& arguments_)
+{
+   return get_argument_all_s(arguments_.buffer_data(), arguments_.get_buffer_end(), tag_view{}, tag_pair{});
+}
+
+
 /*----------------------------------------------------------------------------- get_total_param_length_s */ /**
  * Calculate number of bytes needed to store value in internal buffer used by arguments object
  * \param argumentValue value store for name
@@ -3295,60 +3358,64 @@ unsigned int arguments::get_total_param_length_s(std::string_view stringName, co
    return uSize;
 }
 
+namespace
+{
+   /**
+    * @brief Advances an arguments-buffer pointer to the next value entry.
+    * @tparam POINTER The pointer type used to traverse the buffer (for example, const uint8_t* or uint8_t*).
+    * @param pPosition A pointer to the current position in the arguments buffer; it is expected to point at or before a value entry that can be normalized by move_to_value_s.
+    * @return A pointer advanced to the start of the next entry after the current value header and its aligned payload.
+    */
+   template <typename POINTER>
+   inline POINTER next_internal(POINTER pPosition)
+   {
+#ifndef NDEBUG
+      const auto pbegin_d = pPosition;
+#endif
 
-/*----------------------------------------------------------------------------- next */ /**
+      pPosition = arguments::move_to_value_s(pPosition);
+
+      uint32_t uHeader = 0;
+      std::memcpy(&uHeader, pPosition, sizeof(uHeader)); // safe for unaligned memory
+
+#ifndef NDEBUG
+      const uint32_t uType = uHeader >> 24;
+      auto typename_d = gd::types::type_name_g(uType & ~arguments::eTypeNumber_MASK);
+#endif
+
+      const uint32_t uLength = uHeader & 0x00FFFFFF;
+      assert((uLength % 4) == 0);
+
+      pPosition += (sizeof(uint32_t) + uLength);
+
+#ifndef NDEBUG
+      uint64_t uValueSize_d = static_cast<uint64_t>(pPosition - pbegin_d);
+#endif
+
+      return pPosition;
+   }
+}
+
+/*----------------------------------------------------------------------------- next_s */ /**
  * Move to next element in binary stream. Make sure that next value is compatible type
  * @see: Read `arguments` documents in header for explanation on how data is placed
  * \param riPosition current position in stream
  * \return arguments::pointer position to next value
  */
-arguments::pointer arguments::next_s(pointer pPosition) 
+arguments::pointer arguments::next_s(pointer pPosition)
 {
-#ifndef NDEBUG
-   const_pointer pbegin_d = pPosition;
-#endif
-   pPosition = arguments::move_to_value_s(pPosition);                          // go to value
-   uint32_t u_ = *(uint32_t*)pPosition;                                        // get type and length
-   uint32_t uType = u_ >> 24;                                                  // get value type
-#ifndef NDEBUG
-   auto typename_d = gd::types::type_name_g( uType & ~eTypeNumber_MASK );
-#endif
-   // Total value buffer storage length for value
-   uint32_t uLength = u_ & 0x00FFFFFF;                                                             assert( (uLength % 4) == 0 ); // has to be aligend 
-   pPosition += sizeof( uint32_t );                                            // move past type and length information
-   pPosition += uLength;                                                       // move past value length
-#ifndef NDEBUG
-   uint64_t uValueSize_d = pPosition - pbegin_d;
-#endif
-   return pPosition;
+   return next_internal(pPosition);
 }
 
-/*----------------------------------------------------------------------------- next */ /**
+/*----------------------------------------------------------------------------- next_s */ /**
  * Move to next element in binary stream. Make sure that next value is compatible type
  * @see: Read `arguments` documents in header for explanation on how data is placed
  * \param riPosition current position in stream
  * \return arguments::const_pointer position to next value
  */
-arguments::const_pointer arguments::next_s(const_pointer pPosition) 
+arguments::const_pointer arguments::next_s(const_pointer pPosition)
 {
-#ifndef NDEBUG
-   const_pointer pbegin_d = pPosition;
-#endif
-   pPosition = arguments::move_to_value_s(pPosition);
-   uint32_t u_ = *(uint32_t*)pPosition;
-   uint32_t uType = u_ >> 24;                                                  // get value type
-#ifndef NDEBUG
-   auto typename_d = gd::types::type_name_g( uType & ~eTypeNumber_MASK );
-#endif
-   // Total value buffer storage length for value
-   uint32_t uLength = u_ & 0x00FFFFFF;                                                             assert( (uLength % 4) == 0 ); // has to be aligend 
-   pPosition += sizeof( uint32_t );                                            // move past type and length information
-   pPosition += uLength;                                                       // move past value length
-#ifndef NDEBUG
-   uint64_t uValueSize_d = pPosition - pbegin_d;
-#endif
-
-   return pPosition;
+   return next_internal(pPosition);
 }
 
 /** ---------------------------------------------------------------------------

@@ -213,6 +213,7 @@ public:
    using tag_argument      = gd::types::tag_argument;                         // argument related operations
    using tag_name          = gd::types::tag_name;                             // there is some name related logic involved
    using tag_description   = gd::types::tag_description;                      // tag dispatcher where description is useful
+   using tag_borrow        = gd::types::tag_borrow;                           // tag dispatcher to borrow memory from external container
    struct tag_no_initializer_list {};                                         // do not select initializer_list versions
    struct tag_internal {};                                                    // tag dispatcher for internal use
 
@@ -1332,11 +1333,11 @@ public:
 
    [[nodiscard]] pointer find(unsigned int uIndex);
    [[nodiscard]] const_pointer find(unsigned int uIndex) const;
-   [[nodiscard]] pointer find(const std::string_view& stringName);
-   [[nodiscard]] const_pointer find(const std::string_view& stringName) const;
+   [[nodiscard]] pointer find(std::string_view stringName);
+   [[nodiscard]] const_pointer find(std::string_view stringName) const;
    [[nodiscard]] const_pointer find(std::string_view stringName, const_pointer pPosition) const;
    [[nodiscard]] const_pointer find(const std::pair<std::string_view, gd::variant_view>& pairMatch) const;
-   [[nodiscard]] const_pointer find( const std::string_view& stringName, unsigned uIndex ) const;
+   [[nodiscard]] const_pointer find( std::string_view stringName, unsigned uIndex ) const;
 
    [[nodiscard]] std::pair<argument,argument> find_pair(const std::string_view& stringName) const;
 

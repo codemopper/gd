@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include <array>
 #include <chrono>
 #include <concepts>
 #include <print>
@@ -46,93 +47,14 @@ _GD_BEGIN
 
 
 
-/** @CLASS [tag: benchmark, timing, performance] [summary: measures callable execution time and reports statistics]
- * @brief Measures execution time for a function or lambda over repeated calls.
+/** @CLASS [tag: benchmark, timing, performance] [summary: measures callable execution time and reports statistics] * @brief Measures execution time for a function or lambda over repeated calls. * * run_s() first executes untimed warm-up calls, then measures each requested * iteration using std::chrono::steady_clock. It returns timing * statistics without retaining the result in a benchmark object. * * Three entry points share one implementation, measure_s(): * - run_s(): warm run, no setup and no flush. * - run_cold_s(): like run_s(), but a flusher evicts cache before every sample. * - run_prepared_s(): a setup callable runs before every sample, with an *   optional flusher. Use it when the measured call changes its own input. * * The callable must accept no arguments. Capture any required inputs in a * lambda. Both void-returning and value-returning callables are supported. * Returned values are passed to do_not_optimize_s(); they are not included * in the benchmark result. * * @par Iterations and warm-up * The default run performs 100 warm-up calls followed by 1000 measured calls. * Supply at least one measured iteration; zero iterations does not produce * meaningful minimum and maximum values. * * Warm-up calls invoke the same callable and can change captured state. * Exceptions from the callable propagate to the caller. * * @par Result fields * All duration values are expressed in nanoseconds: * - m_uIterations: number of measured calls, excluding warm-up calls. * - m_dMedian: median measured execution time.
+ * - m_dP95: 95th percentile measured execution time, using the nearest-rank method.
+ * - m_dMean: average measured execution time. * - m_dMinTime: fastest measured iteration. * - m_dMaxTime: slowest measured iteration. * - m_dStandardDeviation: sample standard deviation; zero for one iteration. * - m_dTotalDurationNs: sum of the measured durations. Warm-up, setup and *   flush time are not included. * * Each field has an accessor: iterations(), median(), p95(), mean(), min_time(),
+ * max_time(), standard_deviation() and total_duration().
+ * * @par Reporting * The run functions and the conversion functions are static and do not * require a benchmark object. * A benchmark object optionally stores a name in m_stringName. * The name is not automatically attached to results or printed. * * to_arguments_s() and to_arguments_print_s() are static methods that * convert a result into gd::argument::arguments. Both currently produce * the same descriptive keys, such as "Iterations" and "Mean (ns)". * * @par Measurement considerations * Use an optimized build and compare runs under similar conditions. * Very short operations may be dominated by timer overhead; consider doing * several operations inside each measured call. * * do_not_optimize_s() is a best-effort optimization barrier. Its effectiveness * depends on the compiler; the current MSVC implementation does not provide * a strong compiler barrier. Inspect optimized code for critical measurements. *
+ * ---------------------------------------------------------------------------- * @par Example: measure copying and sorting a small collection * @code{.cpp} * #include <algorithm> * #include <iostream> * #include <vector> * #include "gd_benchmark.h" * * const std::vector<int> vectorInput{ 9, 3, 7, 1, 5 }; * * const auto resultSort = gd::benchmark::run_s( *    [&vectorInput]() *    { *       auto vectorSorted = vectorInput; *       std::sort(vectorSorted.begin(), vectorSorted.end()); *       return vectorSorted; *    }, *    1000,   // Measured calls. *    100);   // Warm-up calls. * * // This measures copying, allocation, and sorting together. * std::cout << "Mean: " << resultSort.mean() << " ns\n"; * std::cout << "Minimum: " << resultSort.min_time() << " ns\n"; * std::cout << "Maximum: " << resultSort.max_time() << " ns\n"; * @endcode * * ---------------------------------------------------------------------------- * @par Example: convert a result into named arguments * @code{.cpp} * // Uses resultSort from the preceding example. * gd::benchmark benchmarkSort("Copy and sort");                        // The object only holds a name. * auto argumentsResult = gd::benchmark::to_arguments_s(resultSort);   // Static, no object needed. * * std::cout << benchmarkSort.m_stringName << ": " *           << argumentsResult["Mean (ns)"].as_double() << " ns\n"; * * // Or format the result directly as text, here with nanoseconds as unit. * std::cout << gd::benchmark::to_string_s(resultSort, "ns"); * @endcode
  *
- * run_s() first executes untimed warm-up calls, then measures each requested
- * iteration using std::chrono::high_resolution_clock. It returns timing
- * statistics without retaining the result in a benchmark object.
- *
- * The callable must accept no arguments. Capture any required inputs in a
- * lambda. Both void-returning and value-returning callables are supported.
- * Returned values are passed to do_not_optimize_s(); they are not included
- * in the benchmark result.
- *
- * @par Iterations and warm-up
- * The default run performs 100 warm-up calls followed by 1000 measured calls.
- * Supply at least one measured iteration; zero iterations does not produce
- * meaningful minimum and maximum values.
- *
- * Warm-up calls invoke the same callable and can change captured state.
- * Exceptions from the callable propagate to the caller.
- *
- * @par Result fields
- * All duration values are expressed in nanoseconds:
- * - m_uIterations: number of measured calls, excluding warm-up calls.
- * - m_dMean: average measured execution time.
- * - m_dMinTime: fastest measured iteration.
- * - m_dMaxTime: slowest measured iteration.
- * - m_dStandardDeviation: sample standard deviation; zero for one iteration.
- * - m_dTotalDurationNs: elapsed time for the complete measurement phase,
- *   including timer and statistics overhead, but excluding warm-up.
- *
- * @par Reporting
- * run_s() is static and does not require a benchmark object.
- * A benchmark object optionally stores a name in m_stringName.
- * The name is not automatically attached to results or printed.
- *
- * to_arguments_s() and to_arguments_print_s() are instance methods that
- * convert a result into gd::argument::arguments. Both currently produce
- * the same descriptive keys, such as "Iterations" and "Mean (ns)".
- *
- * @par Measurement considerations
- * Use an optimized build and compare runs under similar conditions.
- * Very short operations may be dominated by timer overhead; consider doing
- * several operations inside each measured call.
- *
- * do_not_optimize_s() is a best-effort optimization barrier. Its effectiveness
- * depends on the compiler; the current MSVC implementation does not provide
- * a strong compiler barrier. Inspect optimized code for critical measurements.
- *
- * ----------------------------------------------------------------------------
- * @par Example: measure copying and sorting a small collection
- * @code{.cpp}
- * #include <algorithm>
- * #include <iostream>
- * #include <vector>
- * #include "gd_benchmark.h"
- *
- * const std::vector<int> vectorInput{ 9, 3, 7, 1, 5 };
- *
- * const auto resultSort = gd::benchmark::run_s(
- *    [&vectorInput]()
- *    {
- *       auto vectorSorted = vectorInput;
- *       std::sort(vectorSorted.begin(), vectorSorted.end());
- *       return vectorSorted;
- *    },
- *    1000,   // Measured calls.
- *    100);   // Warm-up calls.
- *
- * // This measures copying, allocation, and sorting together.
- * std::cout << "Mean: " << resultSort.m_dMean << " ns\n";
- * std::cout << "Minimum: " << resultSort.m_dMinTime << " ns\n";
- * std::cout << "Maximum: " << resultSort.m_dMaxTime << " ns\n";
- * @endcode
- *
- * ----------------------------------------------------------------------------
- * @par Example: convert a result into named arguments
- * @code{.cpp}
- * // Uses resultSort from the preceding example.
- * gd::benchmark benchmarkSort("Copy and sort");
- * auto argumentsResult = benchmarkSort.to_arguments_s(resultSort);
- *
- * std::cout << benchmarkSort.m_stringName << ": "
- *           << argumentsResult["Mean (ns)"].as_double() << " ns\n";
- * @endcode
- * 
- * ----------------------------------------------------------------------------
- * @par Example: measure a cold run after flushing the cache
+ * ---------------------------------------------------------------------------- * @par Example: measure a cold run after flushing the cache
  * @code{.cpp}
  * #include <algorithm>
  * #include <iostream>
@@ -160,7 +82,7 @@ _GD_BEGIN
  * std::cout << "Maximum: " << resultCold.max_time() << " ns\n";
  * @endcode
  *
- * ----------------------------------------------------------------------------
+ * ----------------------------------------------------------------------------
  * @par Example: flush only the data under test, or part of a cache level
  * @code{.cpp}
  * // Evict just the input buffer with clflush (x86 only). Everything else stays warm.
@@ -174,18 +96,79 @@ _GD_BEGIN
  * const auto resultPartial = gd::benchmark::run_cold_s( [&vectorInput]() { return vectorInput.size(); }, flusherCold, 200 );
  * @endcode
  *
+ * ----------------------------------------------------------------------------
+ * @par Example: prepare state before every sample, warm and cold
+ * run_prepared_s() calls a setup callable before every sample, warm-up samples
+ * included. Use it when the measured call changes its own input. Without setup,
+ * sorting would run on already sorted data from the second sample and on.
+ *
+ * Order for each sample: setup, flush (if a flusher is passed), start timer,
+ * call, stop timer. Setup and flush are not measured. Data written by setup
+ * is therefore evicted again before the measured call in the cold run.
+ * @code{.cpp}
+ * #include <algorithm>
+ * #include <iostream>
+ * #include <random>
+ * #include <vector>
+ * #include "gd_benchmark.h"
+ *
+ * constexpr std::size_t uRunIterations = 100;
+ * constexpr std::size_t uWarmupCount = 3;
+ *
+ * // Fixed seed gives the same data every run.
+ * std::mt19937_64 generatorRandom( 42 );
+ * std::vector<uint64_t> vectorSource( 100'000 );
+ * for( auto& uValue : vectorSource ) { uValue = generatorRandom() % 1'000'000; }
+ *
+ * std::vector<uint64_t> vectorTarget;
+ * vectorTarget.reserve( vectorSource.size() );
+ *
+ * // Restore unsorted data before every sample.
+ * auto setup_ = [&vectorSource, &vectorTarget]() { vectorTarget = vectorSource; };
+ *
+ * // The measured work. Returning a value keeps the sort from being optimized away.
+ * auto sort_ = [&vectorTarget]()
+ * {
+ *    std::sort( vectorTarget.begin(), vectorTarget.end() );
+ *    return vectorTarget.size();
+ * };
+ *
+ * gd::benchmark::flusher flusherCold( gd::benchmark::flush_settings::all_s() );
+ *
+ * // nullptr as flusher gives the warm counterpart.
+ * const auto resultWarm = gd::benchmark::run_prepared_s( setup_, sort_, nullptr, uRunIterations, uWarmupCount );
+ * const auto resultCold = gd::benchmark::run_prepared_s( setup_, sort_, &flusherCold, uRunIterations, uWarmupCount );
+ *
+ * // Durations are nanoseconds, divide to print microseconds.
+ * auto print_result_ = []( const char* pbszName, const gd::benchmark::result& result_ )
+ * {
+ *    std::cout << "\n" << pbszName << "\n";
+ *    std::cout << "Mean: " << ( result_.mean() / 1'000.0 ) << " us\n";
+ *    std::cout << "Minimum: " << ( result_.min_time() / 1'000.0 ) << " us\n";
+ *    std::cout << "Maximum: " << ( result_.max_time() / 1'000.0 ) << " us\n";
+ *    std::cout << "Total: " << ( result_.total_duration() / 1'000'000.0 ) << " ms\n";
+ * };
+ *
+ * print_result_( "sort (warm)", resultWarm );
+ * print_result_( "sort (cold)", resultCold );
+ *
+ * // The same setup_ works with other measured callables, for example one
+ * // sort_ lambda per column when the data under test is a table.
+ * @endcode
+ *
  * @note The copy in the first example is measured together with the sort, as in the warm sample.
  *       Each sample is a single call, so the same flusher can be reused with different settings.
- *       Pin the thread to one core so the flush and the measured call hit
- *
- */
-class benchmark
+ *       In the prepared example the copy in setup_ is not measured, only the sort is.
+ *       Pin the thread to one core so the flush and the measured call hit the same caches.
+ * */class benchmark
 {
 public:
    /// @API [tag: types] [description: The result of a benchmark run, containing statistics about the execution time.] [jump: result__]
    /// \brief The result of a benchmark run, containing statistics about the execution time.
    struct result {
       std::size_t iterations() const noexcept { return m_uIterations; }
+      double median() const noexcept { return m_dMedian; }
+      double p95() const noexcept { return m_dP95; }
       double mean() const noexcept { return m_dMean; }
       double min_time() const noexcept { return m_dMinTime; }
       double max_time() const noexcept { return m_dMaxTime; }
@@ -193,6 +176,8 @@ public:
       double total_duration() const noexcept { return m_dTotalDurationNs; }
 
       std::size_t m_uIterations{ 0 };     ///< The number of iterations executed in the benchmark run.
+      double m_dMedian{ 0.0 };            ///< The median execution time in nanoseconds.
+      double m_dP95{ 0.0 };               ///< The 95th percentile execution time in nanoseconds.
       double m_dMean{ 0.0 };              ///< The mean execution time in nanoseconds.
       double m_dMinTime{ 0.0 };           ///< The minimum execution time in nanoseconds.
       double m_dMaxTime{ 0.0 };           ///< The maximum execution time in nanoseconds.
@@ -211,27 +196,35 @@ public:
       std::size_t m_uSize = 0;
    };
 
+   /// How the eviction walk touches memory.
+   enum class enumFlushMode { read, write };
+
    struct flush_settings
    {
-      enumCacheLevel m_eLevel = enumCacheLevel::none; ///< Evict by walking a buffer up to this level
-      double m_dFraction = 1.0;                       ///< 0..1, how much of the level to walk (partial flush)
-      std::size_t m_uPasses = 2;                      ///< Passes over the buffer, 2 is more reliable than 1
+      enumCacheLevel m_eLevel = enumCacheLevel::none; ///< Evict by walking a buffer sized for all levels up to this one
+      enumFlushMode m_eMode = enumFlushMode::read;    ///< read: evicted lines stay clean (typical), write: lines are dirtied and written back
+      bool m_bScatter = true;                         ///< Visit lines in scattered order so prefetchers and replacement heuristics can't follow
+      double m_dFraction = 1.0;                       ///< 0..1, how much of the capacity to walk (partial flush)
+      double m_dOvershoot = 2.0;                      ///< Walk this many times the combined capacity
+      std::size_t m_uPasses = 2;                      ///< Passes over the buffer
       std::size_t m_uL1Size = 0;                      ///< 0 = detect
       std::size_t m_uL2Size = 0;                      ///< 0 = detect
       std::size_t m_uL3Size = 0;                      ///< 0 = detect
-      std::vector<flush_range> m_vectorRange;         ///< Specific regions to clflush
+      std::vector<flush_range> m_vectorRange;         ///< Specific regions to flush line by line
 
-      static flush_settings all_s() { return { .m_eLevel = enumCacheLevel::l3 }; } ///< Evict all cache levels, including L3 if present
-      static flush_settings l1_s() { return { .m_eLevel = enumCacheLevel::l1 }; } ///< Evict L1 cache only
-      static flush_settings l2_s() { return { .m_eLevel = enumCacheLevel::l2 }; } ///< Evict L2 cache only
-      static flush_settings l3_s() { return { .m_eLevel = enumCacheLevel::l3 }; } ///< Evict L3 cache only
-      /// @brief Create flush settings for a partial cache eviction.
+      static flush_settings all_s() { return { .m_eLevel = enumCacheLevel::l3 }; } ///< flush all levels, plus any ranges
+      static flush_settings l1_s() { return { .m_eLevel = enumCacheLevel::l1 }; }  ///< Flush L1 only, plus any ranges
+      static flush_settings l2_s() { return { .m_eLevel = enumCacheLevel::l2 }; }  ///< Flush L2 only, plus any ranges
+      static flush_settings l3_s() { return { .m_eLevel = enumCacheLevel::l3 }; }  ///< Flush L3 only, plus any ranges
+      /// @brief Flush a fraction of the specified level, plus any ranges. Fraction is 0..1, 1 = full level.
       static flush_settings partial_s(enumCacheLevel eLevel, double dFraction) { return { .m_eLevel = eLevel, .m_dFraction = dFraction }; }
-      /// @brief Create flush settings for a specific memory range to be flushed.
+      /// @brief Flush a specific memory range, plus any other ranges and the specified level.
       static flush_settings range_s(const void* pBegin, std::size_t uSize) { return { .m_vectorRange = { { pBegin, uSize } } }; }
    };
 
-   /// Performs the flush. Create it once and reuse it, the buffer is allocated on first use.
+   /** ------------------------------------------------------------------------
+    * @brief Attempts to flush CPU cache lines for a specified memory range.
+    */
    class flusher
    {
    public:
@@ -239,18 +232,23 @@ public:
       explicit flusher(const flush_settings& settingsFlush) : m_settingsFlush(settingsFlush) {}
 
       flush_settings& settings() { return m_settingsFlush; }
-      void flush();                                  ///< Evict by walk, then clflush ranges
-      static void flush_range_s(const void* pBegin, std::size_t uSize);
-      static std::size_t cache_size_s(int iLevel);   ///< Detected size in bytes for level 1, 2 or 3
+      void flush();                                                     ///< Evict by walk, then flush ranges
+      static bool flush_range_s(const void* pBegin, std::size_t uSize); ///< false if this platform can't flush a range
+      static std::size_t cache_size_s(int iLevel);                      ///< Detected size in bytes for level 1, 2 or 3
+      static std::size_t line_size_s();                                 ///< Detected cache line size, 64 if unknown
 
    private:
       void walk(std::size_t uBytes);
+      std::size_t walk_bytes(int iLevel, double dFraction);
 
-      flush_settings m_settingsFlush;
-      std::unique_ptr<std::uint8_t[]> m_pBuffer;
-      std::size_t m_uBufferSize = 0;
+      inline static volatile std::uint64_t s_uSink = 0;                       // keeps the read walk from being optimized away
+
+      flush_settings m_settingsFlush; ///< Settings for the flush operation, including cache level, mode, and ranges to flush.
+      std::unique_ptr<std::uint8_t[]> m_pBuffer; ///< Buffer used for cache eviction walk; allocated as needed based on the flush settings.
+      std::size_t m_uBufferSize = 0; ///< Size of the allocated buffer for cache eviction walk; updated when the buffer is resized.
+      std::size_t m_uLineSize = 0;   ///< Detected cache line size, 64 if unknown
+      std::array<std::size_t, 4> m_arrayCacheSize{}; ///< Detected sizes, index 1..3
    };
-
    // @API [tag: construction]
 public:
    benchmark() {}
@@ -311,14 +309,13 @@ public:
     * @return A result object containing iteration count and timing statistics in nanoseconds, including mean, minimum, maximum, total duration, and standard deviation.
     */
    template <typename SETUP, typename FUNCTION>
-   static result measure_s(SETUP&& setup_, FUNCTION&& function_, flusher* pflusher_,
-                           std::size_t uIterations, std::size_t uWarmups) {
+   static result measure_s(SETUP&& setup_, FUNCTION&& function_, flusher* pflusher_, std::size_t uIterations, std::size_t uWarmups) {
       constexpr bool bIsVoid = requires { { function_() } -> std::same_as<void>; };
 
       // ## Benchmark execution of the callable, including setup and optional flush, returning the measured duration in nanoseconds.
       auto benchmark_ = [&]() -> double {
          setup_();                                              // not measured
-         if (pflusher_ != nullptr) { pflusher_->flush(); }      // not measured
+         if( pflusher_ != nullptr) { pflusher_->flush(); }      // not measured
          std::atomic_thread_fence(std::memory_order_seq_cst);
 
          auto start_ = std::chrono::steady_clock::now();
@@ -335,21 +332,38 @@ public:
       double dMean = 0.0;  // For Welford's online algorithm to compute mean
       double dM2 = 0.0;    // For Welford's online algorithm to compute variance
       double dTotal = 0.0; // Total duration of all measured iterations
+      std::vector<double> vectorDurations;
+      vectorDurations.reserve(uIterations);
 
       // ## Measure the callable over the specified number of iterations, updating statistics using Welford's algorithm for numerical stability.
       for(std::size_t u = 1; u <= uIterations; ++u) {
          double dDuration = benchmark_();
+         vectorDurations.push_back(dDuration);
          dTotal += dDuration;
-         if (dDuration < dMinTime) dMinTime = dDuration;
-         if (dDuration > dMaxTime) dMaxTime = dDuration;
+         if( dDuration < dMinTime ) dMinTime = dDuration;
+         if( dDuration > dMaxTime ) dMaxTime = dDuration;
          double dDelta = dDuration - dMean;
          dMean += dDelta / u;
          dM2 += dDelta * (dDuration - dMean);
       }
 
       double dVariance = (uIterations > 1) ? (dM2 / (uIterations - 1)) : 0.0;
+       double dMedian = 0.0;
+       double dP95 = 0.0;
+       if( !vectorDurations.empty() )
+       {
+          std::sort(vectorDurations.begin(), vectorDurations.end());
+          const std::size_t uMiddle = vectorDurations.size() / 2;
+          dMedian = (vectorDurations.size() % 2 == 0)
+             ? vectorDurations[uMiddle - 1] + (vectorDurations[uMiddle] - vectorDurations[uMiddle - 1]) / 2.0
+             : vectorDurations[uMiddle];
+          const std::size_t uP95Index = static_cast<std::size_t>(std::ceil(vectorDurations.size() * 0.95)) - 1;
+          dP95 = vectorDurations[uP95Index];
+       }
       return result{ 
          .m_uIterations = uIterations, 
+         .m_dMedian = dMedian,
+         .m_dP95 = dP95,
          .m_dMean = dMean, 
          .m_dMinTime = dMinTime,
          .m_dMaxTime = dMaxTime, 
@@ -359,6 +373,7 @@ public:
    }
 
 public:
+   /// ------------------------------------------------------------------------
    /// Warm run: no setup, no flush.
    template <typename FUNCTION>
       requires std::invocable<FUNCTION>
@@ -366,6 +381,7 @@ public:
       return measure_s(no_setup{}, function_, nullptr, uIterations, uWarmups);
    }
 
+   /// ------------------------------------------------------------------------
    /// Cold run: same as run_s, plus a flush before every sample (not measured).
    template <typename FUNCTION>
       requires std::invocable<FUNCTION>
@@ -373,11 +389,11 @@ public:
       return measure_s(no_setup{}, function_, &flusher_, uIterations, uWarmups);
    }
 
+   /// ------------------------------------------------------------------------
    /// Setup before every sample (not measured). pflusher_ == nullptr gives the warm counterpart.
    template <typename SETUP, typename FUNCTION>
       requires std::invocable<SETUP> && std::invocable<FUNCTION>
-   static result run_prepared_s(SETUP&& setup_, FUNCTION&& function_, flusher* pflusher_ = nullptr,
-                                std::size_t uIterations = 1000, std::size_t uWarmups = 100) {
+   static result run_prepared_s(SETUP&& setup_, FUNCTION&& function_, flusher* pflusher_ = nullptr, std::size_t uIterations = 1000, std::size_t uWarmups = 100) {
       return measure_s(setup_, function_, pflusher_, uIterations, uWarmups);
    }
 

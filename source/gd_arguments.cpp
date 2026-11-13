@@ -1026,6 +1026,20 @@ arguments::arguments(const std::string_view& stringName, const gd::variant& vari
    append_argument(stringName, variantValue);
 }
 
+/** ---------------------------------------------------------------------------
+*@brief Constructs an arguments object from a single string - variant_view pair with a tag to bypass initializer list.
+* @param stringName The string view representing the argument name.
+* @param variantValue The gd::variant_view value associated with the argument name.
+* @param tag_view A tag indicating the use of variant_view(distinguishes constructor overload).
+* @param tag_no_initializer_list A tag to explicitly indicate this constructor does not use an initializer list.
+* Initializes the object by appending the single name - value pair using the tag_view overload.
+*/   
+arguments::arguments(const std::string_view& stringName, gd::variant_view variantValue, tag_view, tag_no_initializer_list)
+{
+   zero();
+   append_argument(stringName, variantValue, tag_view{});
+}
+
 
 /** ---------------------------------------------------------------------------
  * @brief index operator where editable argument is returned.
@@ -1914,7 +1928,7 @@ arguments::const_pointer arguments::find( unsigned int uIndex ) const
  * \param stringName
  * \return gd::argument::arguments::const_pointer position to name if found, otherwise null
  */
-arguments::pointer arguments::find(const std::string_view& stringName)
+arguments::pointer arguments::find(std::string_view stringName)
 {
    for( auto pPosition = next(); pPosition != nullptr; pPosition = next(pPosition) )
    {
@@ -1938,7 +1952,7 @@ arguments::pointer arguments::find(const std::string_view& stringName)
  * \param stringName
  * \return gd::argument::arguments::const_pointer position to name if found, otherwise null
  */
-arguments::const_pointer arguments::find(const std::string_view& stringName) const
+arguments::const_pointer arguments::find(std::string_view stringName) const
 {
    for( auto pPosition = next(); pPosition != nullptr; pPosition = next(pPosition) )
    {
@@ -2002,7 +2016,7 @@ arguments::const_pointer arguments::find(const std::pair<std::string_view, gd::v
  * @param uIndex nth value to return
  * @return gd::argument::arguments::const_pointer pointer to value
  */
-arguments::const_pointer arguments::find( const std::string_view& stringName, unsigned uIndex ) const 
+arguments::const_pointer arguments::find( std::string_view stringName, unsigned uIndex ) const 
 {                                                                                                  assert( uIndex < 0x00A0'0000 ); // realistic ?
    for( auto pPosition = next(); pPosition != nullptr; pPosition = next(pPosition) )
    {
@@ -3005,6 +3019,11 @@ bool arguments::compare_s(const argument& v1, const gd::variant_view v2)
 arguments::argument arguments::get_argument_s(arguments::const_pointer pPosition)
 {
    arguments::enumCType eCType = (arguments::enumCType)*pPosition;
+#ifndef NDEBUG
+   int64_t iType_d = (int64_t)eCType;
+   int_fast64_t iTypeNumber_d = iType_d & ~eTypeNumber_MASK;
+#endif // NDEBUG
+
    pPosition++;
    switch( eCType )
    {
@@ -3037,12 +3056,12 @@ arguments::argument arguments::get_argument_s(arguments::const_pointer pPosition
    case arguments::eTypeNumberWString: return arguments::argument(eTypeWString, (const uint8_t*)(const wchar_t*)(pPosition));
    case arguments::eTypeNumberBinary: return arguments::argument(eTypeGuid, (const uint8_t*)pPosition);
 
-   case (arguments::eTypeNumberString | arguments::eValueLength): {
+   case (arguments::eTypeNumberString | arguments::eValueLength): {            // string with length
       uint32_t uSize = gd::types::cast_g<uint32_t>( pPosition );
       const uint8_t* p_ = (const uint8_t*)pPosition + sizeof(uint32_t);
       return arguments::argument( p_, uSize, enumType(eTypeString | arguments::eValueLength) );
    }
-   case (arguments::eTypeNumberUtf8String | arguments::eValueLength): {
+   case (arguments::eTypeNumberUtf8String | arguments::eValueLength): {        // utf8 string with length
       uint32_t uSize = gd::types::cast_g<uint32_t>( pPosition );
       const uint8_t* p_ = (const uint8_t*)pPosition + sizeof(uint32_t);
       return arguments::argument( p_, uSize, enumType(eTypeUtf8String | arguments::eValueLength) );
@@ -3150,6 +3169,18 @@ std::vector<std::pair<std::string_view, gd::variant_view>> arguments::get_argume
    }
 
    return vectorArgument;
+}
+
+/** ---------------------------------------------------------------------------
+ * Extracts all arguments from an arguments object into a vector of name-value pairs.
+ * @param {const arguments&} arguments_ - The arguments object to extract from.
+ * @returns {std::vector<std::pair<std::string_view, gd::variant_view>>} 
+ *          A vector of pairs where each pair contains an optional name (std::string_view) 
+ *          and a value (gd::variant_view). Unnamed arguments have an empty name.
+ */
+std::vector<std::pair<std::string_view, gd::variant_view>> arguments::get_argument_all_s(const arguments& arguments_)
+{
+   return get_argument_all_s(arguments_.buffer_data(), arguments_.get_buffer_end(), tag_view{}, tag_pair{});
 }
 
 

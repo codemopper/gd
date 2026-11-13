@@ -28,6 +28,7 @@
 #include "gd_expression.h"
 #include "gd_expression_value.h"
 #include "gd_expression_runtime.h"
+#include "../gd_vector_transport.h"
 
 #ifndef _GD_EXPRESSION_BEGIN
 #define _GD_EXPRESSION_BEGIN namespace gd { namespace expression {
@@ -194,9 +195,10 @@ struct token
    uint32_t get_value_type() const { return ( m_uType >> 8 ) & 0xFF; }
    uint32_t get_function_type() const { return ( m_uType & 0xFF00 ); }
 
-   uint32_t get_arg_count() const { return ( m_uType >> 16 ) & 0xFF; }   ///< actual arg count for varargs functions (0 = use method's in_count)
+   uint32_t get_arg_count() const { return ( m_uType >> 16 ) & 0xFF; }         ///< actual arg count for varargs functions (0 = use method's in_count)
    void     set_arg_count(uint32_t uCount) { m_uType = (m_uType & 0xFF00FFFF) | ((uCount & 0xFF) << 16); }
 
+   bool is_equal() const { return (m_uType & 0xFF) == eOperatorEqual; }
    bool is_assign() const { return (m_uType & eTokenFlagAssign) != 0; }
    void set_assign(bool bSet = true) { if(bSet) m_uType |= eTokenFlagAssign; else m_uType &= ~eTokenFlagAssign; }
 
@@ -247,7 +249,7 @@ struct token
 
    static std::pair<bool, std::string> calculate_s( const std::vector<token>& vectorToken, value* pvalueResult );
    static std::pair<bool, std::string> calculate_s(const std::vector<token>& vectorToken, value* pvalueResult, runtime& runtime_);
-   static std::pair<bool, std::string> calculate_s(const std::vector<token>& vectorToken, std::vector<value>* pvectorReturn, runtime& runtime_);
+   static std::pair<bool, std::string> calculate_s(const std::vector<token>& vectorToken, vector_local<value, 8>* pvectorReturn, runtime& runtime_);
 
 
    /// @brief calculate_s that is simplified for one liner expression that returns single value, make sure that the formula is correct, only compile time checks and twrows

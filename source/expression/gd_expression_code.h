@@ -37,15 +37,17 @@
  *     x = x + 1
  * end
  *
- * for i = 1, 10, 1
+ * for i = 1, i <= 10, i = i + 1
  * begin
  *     x = x + i
  * end
  * ```
  *
- * `for` syntax: `for <var> = <start>, <limit>, <step>`
- * The three parts after `=` are plain expressions separated by commas.
- * Inside a for-body `break` and `continue` are supported.
+ * `for` syntax: `for <init>, <condition>, <step>`
+ * The three parts are plain expressions separated by top-level commas (commas
+ * inside parentheses or strings are ignored).  A bare value as step (`for i = 1, i < 10, 1`)
+ * is expanded to `i = i + 1`.  Inside a for-body `break` and
+ * `continue` are supported.
  *
  * ## Strings
  *
@@ -70,6 +72,7 @@
 
 #include <cassert>
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -87,7 +90,7 @@
 
 _GD_EXPRESSION_BEGIN
 
-/**
+/** @CLASS [tag: expression] [name: statement] [pattern: value] [summary: manage parsed expression in code] [jump: statement__]
  * @brief One compiled unit of execution inside a `code` program.
  *
  * A statement is the atom of the flat bytecode.  The executor walks a
@@ -103,8 +106,8 @@ _GD_EXPRESSION_BEGIN
  * | eKindWhile      | condition            | index to jump to when condition is false |
  * | eKindLoopBack   | empty                | unconditional jump back to while/for     |
  * | eKindForInit    | init expression      | unused (-1)                              |
- * | eKindForCond    | condition            | index to jump past loop when false       |
- * | eKindForStep    | step expression      | m_iJump = index of eKindForCond          |
+ * | eKindForCondition | condition          | index to jump past loop when false       |
+ * | eKindForStep    | step expression      | m_iJump = index of eKindForCondition     |
  * | eKindBreak      | empty                | index past enclosing loop end            |
  * | eKindContinue   | empty                | index of loop step / condition           |
  */
@@ -112,16 +115,19 @@ struct statement
 {
    enum enumKind : uint8_t
    {
-      eKindExpr      = 0,  ///< plain expression, always executed
-      eKindIf        = 1,  ///< evaluate condition; false -> jump to m_iJump
-      eKindElseJump  = 2,  ///< end-of-if-body: unconditional jump past else
-      eKindWhile     = 3,  ///< evaluate condition; false -> jump to m_iJump
-      eKindLoopBack  = 4,  ///< end-of-loop-body: jump back (m_iJump = head)
-      eKindForInit   = 5,  ///< for: init assignment, run once
-      eKindForCond   = 6,  ///< for: condition check; false -> jump past loop
-      eKindForStep   = 7,  ///< for: step expression; then jump to eKindForCond
-      eKindBreak     = 8,  ///< jump to first statement past enclosing loop
-      eKindContinue  = 9,  ///< jump to loop step / condition
+      eKindExpression   = 0,  ///< plain expression, always executed
+      eKindIf           = 1,  ///< evaluate condition; false -> jump to m_iJump
+      eKindElseJump     = 2,  ///< end-of-if-body: unconditional jump past else
+      eKindWhile        = 3,  ///< evaluate condition; false -> jump to m_iJump
+      eKindLoopBack     = 4,  ///< end-of-loop-body: jump back (m_iJump = head)
+      eKindForInit      = 5,  ///< for: init assignment, run once
+      eKindForCondition = 6,  ///< for: condition check; false -> jump past loop
+      eKindForStep      = 7,  ///< for: step expression; then jump to eKindForCondition
+      eKindBreak        = 8,  ///< jump to first statement past enclosing loop
+      eKindContinue     = 9,  ///< jump to loop step / condition
+      eKindFunctionCall = 10, ///< call user-defined function (jump to function entry)
+      eKindReturn       = 11, ///< return from user-defined function
+      eKindFunctionSkip = 12, ///< skip function body in main program flow
    };
 
    // ## construction ----------------------------------------------------------
@@ -132,8 +138,8 @@ struct statement
 
    statement(enumKind eKind, int32_t iJump) : m_eKind(eKind), m_iJump(iJump) {}
 
-   statement(enumKind eKind, std::vector<token>&& vectorToken_)
-      : m_eKind(eKind), m_vectorToken(std::move(vectorToken_)) {}
+   statement(enumKind eKind, std::vector<token>&& vectorToken)
+      : m_eKind(eKind), m_vectorToken(std::move(vectorToken)) {}
 
    // copy
    statement(const statement& o) { common_construct(o); }
@@ -143,6 +149,8 @@ struct statement
    statement& operator=(const statement& o)      { common_construct(o);            return *this; }
    statement& operator=(statement&& o) noexcept  { common_construct(std::move(o)); return *this; }
 
+   statement& operator=(std::vector<token>&& vectorToken_) { m_vectorToken = std::move(vectorToken_); return *this; }
+
    ~statement() {}
 
    void common_construct(const statement& o)
@@ -150,6 +158,7 @@ struct statement
       m_eKind       = o.m_eKind;
       m_iJump       = o.m_iJump;
       m_vectorToken = o.m_vectorToken;
+      m_vectorArgumentToken = o.m_vectorArgumentToken;
       m_stringSource = o.m_stringSource;
    }
 
@@ -158,6 +167,7 @@ struct statement
       m_eKind        = o.m_eKind;
       m_iJump        = o.m_iJump;
       m_vectorToken  = std::move(o.m_vectorToken);
+      m_vectorArgumentToken = std::move(o.m_vectorArgumentToken);
       m_stringSource = std::move(o.m_stringSource);
    }
 
@@ -168,19 +178,46 @@ struct statement
    const std::vector<token>& get_tokens() const { return m_vectorToken; }
 
    void set_jump(int32_t iJump) { m_iJump = iJump; }
+   int32_t jump() const { return m_iJump; }
 
    bool has_tokens() const { return m_vectorToken.empty() == false; }
 
    // ## attributes ------------------------------------------------------------
 
-   enumKind            m_eKind        = eKindExpr; ///< what this statement does
+   enumKind            m_eKind        = eKindExpression; ///< what this statement does
    int32_t             m_iJump        = -1;         ///< branch target index, -1 = none
    std::vector<token>  m_vectorToken;               ///< pre-compiled postfix tokens
-   std::string         m_stringSource;              ///< original source text (debug / error messages)
+   std::vector<std::vector<token>> m_vectorArgumentToken; ///< function-call argument expressions in postfix form
+   std::string_view    m_stringSource;              ///< view into code source buffer (debug / error messages)
+
+   static constexpr std::string_view kind_to_string_s(unsigned eKind) { return kind_to_string_s(static_cast<enumKind>(eKind)); }
+   static constexpr std::string_view kind_to_string_s(enumKind eKind);
 };
 
+constexpr std::string_view statement::kind_to_string_s(enumKind eKind)
+{
+   switch(eKind)
+   {
+   case eKindExpression:   return "expression";
+   case eKindIf:           return "if";
+   case eKindElseJump:     return "else_jump";
+   case eKindWhile:        return "while";
+   case eKindLoopBack:     return "loop_back";
+   case eKindForInit:      return "for_init";
+   case eKindForCondition: return "for_condition";
+   case eKindForStep:      return "step";
+   case eKindBreak:        return "break";
+   case eKindContinue:     return "continue";
+   case eKindFunctionCall: return "function_call";
+   case eKindReturn:       return "return";
+   case eKindFunctionSkip: return "function_skip";
+   default:                return "unknown";
+   }
+}
 
-/**
+
+
+/** @CLASS [tag: expression] [name: code] [pattern: container] [summary: handle script code expressions] [jump: code__]
  * @brief Flat-bytecode program container with if / else / while / for support.
  *
  * A `code` object is the single addition needed to give the expression engine
@@ -211,6 +248,14 @@ struct statement
  */
 struct code
 {
+   struct script_function
+   {
+      std::string_view             m_stringName;
+      int32_t                      m_iEntryIndex = -1;
+      int32_t                      m_iExitIndex = -1;
+      std::vector<std::string_view> m_vectorParameter;
+   };
+
    // ## construction ----------------------------------------------------------
 
    code() {}
@@ -225,8 +270,21 @@ struct code
 
    ~code() {}
 
-   void common_construct(const code& o)      { m_vectorStatement = o.m_vectorStatement; }
-   void common_construct(code&& o) noexcept  { m_vectorStatement = std::move(o.m_vectorStatement); }
+   void common_construct(const code& o)
+   {
+      m_pSource         = o.m_pSource;                                        // shared immutable buffer, token views stay valid
+      m_uSourceLength   = o.m_uSourceLength;
+      m_vectorStatement = o.m_vectorStatement;
+      m_vectorFunction  = o.m_vectorFunction;
+   }
+   void common_construct(code&& o) noexcept
+   {
+      m_pSource         = std::move(o.m_pSource);
+      m_uSourceLength   = o.m_uSourceLength;
+      m_vectorStatement = std::move(o.m_vectorStatement);
+      m_vectorFunction  = std::move(o.m_vectorFunction);
+      o.m_uSourceLength = 0;
+   }
 
    // ## methods ---------------------------------------------------------------
 
@@ -237,7 +295,11 @@ struct code
    bool empty() const { return m_vectorStatement.empty(); }
 
    /// @brief remove all compiled statements, ready for a new compile
-   void clear() { m_vectorStatement.clear(); }
+   void clear() { m_vectorStatement.clear(); m_vectorFunction.clear(); m_pSource.reset(); m_uSourceLength = 0; }
+
+   /// @brief copy source into owned buffer that all token and statement views point into
+   /// @return begin and end pointers into the owned buffer
+   std::pair<const char*, const char*> set_source(const char* piszBegin, const char* piszEnd);
 
    // ## compile ---------------------------------------------------------------
 
@@ -266,7 +328,10 @@ struct code
 
    // ## attributes ------------------------------------------------------------
 
+   std::shared_ptr<const char[]> m_pSource;  ///< owned source text, address is stable on move and shared on copy
+   size_t m_uSourceLength = 0;               ///< number of characters in m_pSource (excluding terminator)
    std::vector<statement> m_vectorStatement; ///< flat list of compiled statements
+   std::vector<script_function> m_vectorFunction; ///< compiled user-defined script functions
 
    // ## free (static) functions -----------------------------------------------
 
